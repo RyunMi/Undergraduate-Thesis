@@ -1,0 +1,117 @@
+%\usepackage{fontspec}
+\RequirePackage{amsmath}              % 排版数学公式
+\RequirePackage{ntheorem}             % proof等环境
+\RequirePackage{latexsym}
+\RequirePackage{amsfonts}
+\RequirePackage{amssymb}              % 定义AMS的数学符号命令
+\RequirePackage{mathrsfs}             % 数学RSFS书写字体
+\RequirePackage{bm}                   % 数学黑体
+\RequirePackage{graphicx}             % 支持插图,图形宏包graphics的扩展宏包
+\RequirePackage{color,xcolor}         % 支持彩色
+\RequirePackage{hyperref}             % 超级链接
+\hypersetup{
+  CJKbookmarks=true,
+  bookmarksnumbered=false,
+  bookmarksopen=true,
+  colorlinks=true,
+  linkcolor=black,
+  anchorcolor=black,
+  citecolor=black,
+  urlcolor=green,
+}
+\RequirePackage{geometry}             % 简单灵活的页面设置界面
+\geometry{
+  %paperwidth=21cm,
+  %paperheight=29.7cm,
+  top=3cm,
+  bottom=2.5cm,
+  left=3cm,
+  right=2cm,
+  %headheight=1.2cm,
+  %headsep=0.07cm,
+  %footskip=1.27cm,
+}
+\RequirePackage{amscd}
+\RequirePackage[linesnumbered,ruled,vlined]{algorithm2e}
+\RequirePackage{diagbox}
+\RequirePackage{cite}
+\RequirePackage{xtuformat}
+
+%---定理, 定义 等环境的设置---------------------------------------------------------------
+\newtheorem{definition}{\hspace{2em}定义}[section]
+\newtheorem{proposition}{\hspace{2em}命题}[section]
+\newtheorem{property}{\hspace{2em}性质}[section]
+\newtheorem{lemma}{\hspace{2em}引理}[section]
+\newtheorem{theorem}{\hspace{2em}定理}[section]
+\newtheorem{corollary}{\hspace{2em}推论}[section]
+\newtheorem{example}{\hspace{2em}例}
+\newtheorem{remark}{\hspace{2em}注}
+\newtheorem*{proof}{\hspace{2em}证}
+
+%---自定义命令和环境-----------------------------------------------------------------------
+\setlength{\baselineskip}{20pt}
+
+\setmainfont{Times New Roman}
+
+
+
+\newenvironment{cnabstract}[1]{%
+    {\centering\chapter*{摘~~~~要}}
+    \songti\zihao{5}%
+    \setlength\parskip{0.5\baselineskip}
+    \vskip 0.5\baselineskip  #1}
+    %\setlength\parskip{1\baselineskip}}
+
+\newenvironment{cnkeywords}[1]{%
+    {\songti\bfseries\zihao{-4}关键词：}\zihao{5}#1%
+}
+
+\newenvironment{enabstract}[1]{%
+    {\centering\chapter*{\setmainfont{Times New Roman}
+     Abstract}}%
+    \zihao{-4}
+    \setlength\parskip{0.5\baselineskip}
+    \vskip 0.5\baselineskip  #1}
+
+\newenvironment{enkeywords}[1]{%
+    {\bf \zihao{-4}Key Words: }\zihao{-4}#1%
+}
+
+\CTEXsetup[format={\songti\bfseries\zihao{3}},name={},number={\arabic{chapter}}]{chapter}
+% \CTEXsetup[nameformat={\songti\bfseries\zihao{3}}]{chapter}
+% \CTEXsetup[titleformat={\songti\bfseries\zihao{3}}]{chapter}
+% \CTEXsetup[numberformat={\songti\bfseries\zihao{3}}]{chapter}
+\CTEXsetup[beforeskip={0pt},afterskip={0pt}]{chapter}
+%\CTEXsetup[]{chapter}
+
+\CTEXsetup[format={\songti\bfseries\zihao{4}}]{section}
+\CTEXsetup[beforeskip={24pt},afterskip={6pt}]{section}
+
+\CTEXsetup[format={\songti\bfseries\zihao{-4}}]{subsection}
+\CTEXsetup[beforeskip={12pt},afterskip={6pt}]{subsection}
+
+\CTEXsetup[format={\songti\zihao{-4}}]{subsubsection}
+\CTEXsetup[beforeskip={6pt},afterskip={6pt}]{subsubsection}
+
+\newlength\oneimage
+\setlength\oneimage{0.8\textwidth}
+
+\newlength\twoimage
+\setlength\twoimage{0.45\textwidth}
+
+\newlength\threeimage
+\setlength\threeimage{0.3\textwidth}
+
+%---罗马数字--------
+\makeatletter
+\newcommand*{\rom}[1]{\expandafter\@slowromancap\romannumeral #1@}
+\makeatother
+
+%---将Algorithm改为中文宋体“算法”--------
+\renewcommand{\algorithmcfname}{\songti 算法}
+\makeatletter
+\renewcommand{\algocf@captiontext}[2]{#1\algocf@typo\quad \AlCapFnt{}#2}
+\makeatother
+
+% 上标引用
+\newcommand{\upcite}[1]{\textsuperscript{\cite{#1}}}
