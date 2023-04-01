@@ -78,7 +78,7 @@ MixUp正则化项使用输入和标签的凸组合来训练模型。MixUp可以�
 
 MixMatch是一种“整体”方法，它融合了之前讨论的SSL主导范式中的思想和成分。
 
-给定一批包含标签示例 $\mathcal{X}$ 和相应的独热目标(代表 $L$ 个可能标签中的一个)以及大小相同的未标记示例  $\mathcal{U}$ 。
+给定一批包含标签示例 $\mathcal{X}$ 和相应的独热目标(代表 $L$ 个可能标签中的一个)以及大小相同的未标记示例 $\mathcal{U}$ 。
 
 MixMatch生成了一批处理过的带标签样本 $\mathcal{X}'$ 和一批带有“猜测”标签的处理过的未标记样本 $\mathcal{U}'$ 。将 $\mathcal{U}'$ 和 $\mathcal{X}'$ 用于分开计算带标签和未标记损失项。
 
@@ -103,11 +103,11 @@ MixMatch生成了一批处理过的带标签样本 $\mathcal{X}'$ 和一批带�
 
 如前所述，减轻标记数据不足的常见方法是使用数据增强。数据增强引入了一个函数 $Augment(x)$ ，该函数以随机的方式将输入数据点 $x$ 进行转换，使其标签保持不变，不同的Augment应用将产生不同的(随机)输出。在有标签和无标签数据上都使用数据增强。
 
-对于标记数据批次 $\mathcal{X}$ 中的每个 $x_b$ ，本文生成一个变换版本 $\hat{x}_b=Augment(x_b)$ (算法第3行)。对于未标记数据批次  $\mathcal{U}$ 中的每个 $u_b$ ，本文生成 $K$ 个增强 $\hat{u}_{b,k}=Augment(u_b)$ ，其中 $k\in(1,\cdots,K)$ (算法第5行)。这些分离的增强被用于生成每个 $u_b$ 的“猜测标签” $q_b$ 。
+对于标记数据批次 $\mathcal{X}$ 中的每个 $x_b$ ，本文生成一个变换版本 $\hat{x}\_b=Augment(x_b)$ (算法第3行)。对于未标记数据批次  $\mathcal{U}$ 中的每个 $u_b$ ，本文生成 $K$ 个增强 $\hat{u}\_{b,k}=Augment(u_b)$ ，其中 $k\in(1,\cdots,K)$ (算法第5行)。这些分离的增强被用于生成每个 $u_b$ 的“猜测标签” $q_b$ 。
 
 #### 标签猜测
 
-对于  $\mathcal{U}$ 中的每个未标记示例，MixMatch使用模型的预测生成示例标签的“猜测”，这个猜测后来被用于无监督损失项。为此，计算 $u_b$ 的 $K$ 个增强的模型预测类分布的平均值(算法第7行)：
+对于 $\mathcal{U}$ 中的每个未标记示例，MixMatch使用模型的预测生成示例标签的“猜测”，这个猜测后来被用于无监督损失项。为此，计算 $u_b$ 的 $K$ 个增强的模型预测类分布的平均值(算法第7行)：
 
 ![\<img alt="" data-attachment-key="8G3QB6NJ" data-annotation="%7B%22attachmentURI%22%3A%22http%3A%2F%2Fzotero.org%2Fusers%2F8273795%2Fitems%2FDW5BELBT%22%2C%22annotationKey%22%3A%22IU4ED5E4%22%2C%22color%22%3A%22%23ffd400%22%2C%22pageLabel%22%3A%224%22%2C%22position%22%3A%7B%22pageIndex%22%3A3%2C%22rects%22%3A%5B%5B240.066%2C246.497%2C371.37%2C281.436%5D%5D%7D%2C%22citationItem%22%3A%7B%22uris%22%3A%5B%22http%3A%2F%2Fzotero.org%2Fusers%2F8273795%2Fitems%2FDG73HB5E%22%5D%2C%22locator%22%3A%224%22%7D%7D" width="219" height="58" src="attachments/8G3QB6NJ.png" ztype="zimage">](attachments/8G3QB6NJ.png)\
 <span class="citation" data-citation="%7B%22citationItems%22%3A%5B%7B%22uris%22%3A%5B%22http%3A%2F%2Fzotero.org%2Fusers%2F8273795%2Fitems%2FDG73HB5E%22%5D%2C%22locator%22%3A%224%22%7D%5D%2C%22properties%22%3A%7B%7D%7D" ztype="zcitation">(<span class="citation-item"><a href="zotero://select/library/items/DG73HB5E">Berthelot 等, 2019, p. 4</a></span>)</span>
