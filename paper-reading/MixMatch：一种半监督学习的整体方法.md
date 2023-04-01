@@ -103,7 +103,7 @@ MixMatch生成了一批处理过的带标签样本 $\mathcal{X}'$ 和一批带�
 
 如前所述，减轻标记数据不足的常见方法是使用数据增强。数据增强引入了一个函数 $Augment(x)$ ，该函数以随机的方式将输入数据点 $x$ 进行转换，使其标签保持不变，不同的Augment应用将产生不同的(随机)输出。在有标签和无标签数据上都使用数据增强。
 
-对于标记数据批次 $\mathcal{X}$ 中的每个 $x_b$ ，本文生成一个变换版本 $\hat{x}\_b=Augment(x_b)$ (算法第3行)。对于未标记数据批次  $\mathcal{U}$ 中的每个 $u_b$ ，本文生成 $K$ 个增强 $\hat{u}\_{b,k}=Augment(u_b)$ ，其中 $k\in(1,\cdots,K)$ (算法第5行)。这些分离的增强被用于生成每个 $u_b$ 的“猜测标签” $q_b$ 。
+对于标记数据批次 $\mathcal{X}$ 中的每个 $x_b$ ，本文生成一个变换版本 $\hat{x}\_b=Augment(x_b)$ (算法第3行)。对于未标记数据批次 $\mathcal{U}$ 中的每个 $u_b$ ，本文生成 $K$ 个增强 $\hat{u}\_{b,k}=Augment(u_b)$ ，其中 $k\in(1,\cdots,K)$ (算法第5行)。这些分离的增强被用于生成每个 $u_b$ 的“猜测标签” $q_b$ 。
 
 #### 标签猜测
 
@@ -156,7 +156,7 @@ $T$ 是超参数，当 $T\rightarrow 0$ 时， $Sharpen(p,T)$ 的输出将趋近
 
 对于 $\hat{\mathcal{X}}$ 中的每个第 $i$ 个示例-标签对，计算 $MixUp(\hat{\mathcal{X}_i},\mathcal{W}_i)$ ，并将结果添加到集合 $\mathcal{X}'$ 中(算法第13行)。注意，由于对MixUp进行了轻微修改，因此 $\mathcal{X}'$ 中的元素在插值方面比 $\mathcal{W}$ 中相应的插补更接近原始标记数据点。
 
-类似地计算 $\mathcal{U}_i'=MixUp(\hat{\mathcal{U}_i},\mathcal{W}_{i+|\hat{\mathcal{X}}|})$ ，其中 $i\in(1,\dots,|\hat{\mathcal{U}}|)$ ，有意使用没有在构建 $\mathcal{X}'$ 中使用的 $\mathcal{W}$ 的剩余部分(算法第14行)。
+类似地计算 $\mathcal{U}\_i'=MixUp(\hat{\mathcal{U}\_i},\mathcal{W}\_{i+|\hat{\mathcal{X}}|})$ ，其中 $i\in(1,\dots,|\hat{\mathcal{U}}|)$ ，有意使用没有在构建 $\mathcal{X}'$ 中使用的 $\mathcal{W}$ 的剩余部分(算法第14行)。
 
 总之，MixMatch 将 $X'$ 转化为 $\mathcal{X}'$ ，这是一组应用了数据增强和MixUp(可能混合了未标记的示例)的标记示例。同样地， $\mathcal{U}$ 被转化为 $\mathcal{U}'$ ，其中包含了每个未标记示例的多个增强以及相应的标签猜测。
 
