@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 from torchvision import models
 from easydl import *
+from torch.autograd import Function
+from typing import  List, Dict, Optional, Any, Tuple
 
 # BaseFeatureExtractor类继承了nn.Module类，并实现了以下方法：
 # forward方法：作为模块的前向传递方法，接收任意数量的输入参数并返回它们的输出。
@@ -27,80 +29,6 @@ class BaseFeatureExtractor(nn.Module):
             else:
                 module.train(mode)
 
-# MyGradientReverseLayer 是一个继承了 torch.autograd.Function 的静态方法类，
-# 定义了两个静态方法：forward 和 backward，分别实现了前向传播和反向传播。
-# 在前向传播中，将传入的 input 保存到 context 中，并返回 input。
-# 在反向传播中，将前向传播传入的 grad_outputs 乘以一个常数（-coeff），并返回None和结果。
-# 这里的 coeff 表示梯度反转的系数。
-
-class MyGradientReverseLayer(torch.autograd.Function):
-    """
-    usage:(can't be used in nn.Sequential, not a subclass of nn.Module)::
-
-        x = Variable(torch.ones(1, 2), requires_grad=True)
-        grl = GradientReverseLayer.apply
-        y = grl(0.5, x)
-
-        y.backward(torch.ones_like(y))
-
-        print(x.grad)
-
-    """
-    @staticmethod
-    def forward(ctx, coeff, input):
-        ctx.coeff = coeff
-        # this is necessary. if we just return ``input``, ``backward`` will not be called sometimes
-        return input.view_as(input)
-
-    @staticmethod
-    def backward(ctx, grad_outputs):
-        coeff = ctx.coeff
-        return None, -coeff * grad_outputs
-
-# 将 MyGradientReverseLayer 封装成一个 PyTorch 模块，使其可以用在 nn.Sequential 中。
-# 在模块的初始化中，需要传入一个 scheduler 函数，用于计算 coeff 的值。
-# 模块会在训练过程中自动更新全局步数 global_step 和 coeff 的值。
-# 在模块的 forward 方法中，根据全局步数和 scheduler 计算出 coeff 的值，
-# 然后调用 MyGradientReverseLayer 实现梯度反转，并返回反转后的结果。
-
-# Usage中：MyGradientReverseModule 用于将 x 反转梯度，从而使其在经过反转后的网络中，
-# 梯度逆向传播到之前的网络，进行域自适应训练。最后使用 matplotlib 绘制了梯度反转的曲线。
-
-class MyGradientReverseModule(nn.Module):
-    """
-    wrap GradientReverseLayer to be a nn.Module so that it can be used in ``nn.Sequential``
-
-    usage::
-
-        grl = GradientReverseModule(lambda step : aToBSheduler(step, 0.0, 1.0, gamma=10, max_iter=10000))
-
-        x = Variable(torch.ones(1), requires_grad=True)
-        ans = []
-        for _ in range(10000):
-            x.grad = None
-            y = grl(x)
-            y.backward()
-            ans.append(variable_to_numpy(x.grad))
-
-        plt.plot(list(range(10000)), ans)
-        plt.show() # you can see gradient change from 0 to -1
-    """
-    def __init__(self, scheduler):
-        super(MyGradientReverseModule, self).__init__()
-        self.scheduler = scheduler
-        self.register_buffer('global_step', torch.zeros(1))
-        self.coeff = 0.0
-        self.grl = MyGradientReverseLayer.apply
-
-    def forward(self, x):
-        if self.global_step.item() < 25000:
-            self.coeff = 0
-        else:
-            self.coeff = self.scheduler(self.global_step.item() - 25000)
-        if self.training:
-            self.global_step += 1.0
-        return self.grl(self.coeff, x)
-
 # ResNet50Fc类继承了BaseFeatureExtractor类，并实现了以下方法：
 # __init__方法：初始化ResNet50模型，可以加载预训练模型并进行归一化。
 # forward方法：使用ResNet50模型提取图像特征，先进行可选的数据增强（如果处于训练模式），
@@ -111,7 +39,7 @@ class ResNet50Fc(BaseFeatureExtractor):
     """
     ** input image should be in range of [0, 1]**
     """
-    def __init__(self, transform=None, model_path=None, normalize=True):
+    def __init__(self, model_path=None, normalize=True):
         super(ResNet50Fc, self).__init__()
         if model_path:
             if os.path.exists(model_path):
@@ -129,7 +57,6 @@ class ResNet50Fc(BaseFeatureExtractor):
             self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
         else:
             self.normalize = False
-        self.transform=transform
 
         model_resnet = self.model_resnet
         self.conv1 = model_resnet.conv1
@@ -144,8 +71,6 @@ class ResNet50Fc(BaseFeatureExtractor):
         self.__in_features = model_resnet.fc.in_features
 
     def forward(self, x):
-        if self.training and self.transform is not None:
-            x = self.transform(x)
         if self.normalize:
             x = (x - self.mean) / self.std
         x = self.conv1(x)
@@ -173,7 +98,7 @@ class Resnext101Fc(BaseFeatureExtractor):
     """
     ** input image should be in range of [0, 1]**
     """
-    def __init__(self, transform=None, model_path=None, normalize=True):
+    def __init__(self, model_path=None, normalize=True):
         super(Resnext101Fc, self).__init__()
         if model_path:
             if os.path.exists(model_path):
@@ -191,7 +116,6 @@ class Resnext101Fc(BaseFeatureExtractor):
             self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
         else:
             self.normalize = False
-        self.transform=transform
 
         model_resnext = self.model_resnext
         self.conv1 = model_resnext.conv1
@@ -206,8 +130,6 @@ class Resnext101Fc(BaseFeatureExtractor):
         self.__in_features = model_resnext.fc.in_features
 
     def forward(self, x):
-        if self.training and self.transform is not None:
-            x = self.transform(x)
         if self.normalize:
             x = (x - self.mean) / self.std
         x = self.conv1(x)
@@ -251,6 +173,8 @@ class CLS(nn.Module):
 # 其初始化函数__init__定义了一个由三个全连接层和两个ReLU激活函数以及一个Sigmoid激活函数组成的网络。
 # 该网络接受一个大小为in_feature的输入向量，并输出一个值在[0,1]之间的标量，代表输入样本为真实数据的概率。
 # 在网络结构中还使用了easydl库中的GradientReverseModule，该模块可以将反向传播过程中的梯度反转，用于实现领域自适应训练的方法。
+# 与TOOR flip_coeff相同（除了没有预训练5000步且最大迭代次数不为400000）：
+# coeff=0.0 + (2.0 / (1 + np.exp(- gamma * step * 1.0 / max_iter)) - 1.0) * (1.0 - 0.0)
 # forward函数将输入向量传递给GradientReverseModule和main子模块进行前向计算，最终输出模型的预测结果。
 
 class adversarialnet(nn.Module):
@@ -275,3 +199,94 @@ class adversarialnet(nn.Module):
         x_ = self.grl(x)
         y = self.main(x_)
         return y
+    
+# 自定义梯度反转层、域判别器以及域对抗损失（未修改）
+# class GradientReverseFunction(Function):
+
+#     @staticmethod
+#     def forward(ctx: Any, input: torch.Tensor, coeff: Optional[float] = 1.) -> torch.Tensor:
+#         ctx.coeff = coeff
+#         output = input * 1.0
+#         return output
+
+#     @staticmethod
+#     def backward(ctx: Any, grad_output: torch.Tensor) -> Tuple[torch.Tensor, Any]:
+#         return grad_output.neg() * ctx.coeff, None
+
+# class WarmStartGradientReverseLayer(nn.Module):
+
+#     def __init__(self, alpha: Optional[float] = 1.0, lo: Optional[float] = 0.0, hi: Optional[float] = 1.,
+#                  max_iters: Optional[int] = 1000., auto_step: Optional[bool] = False):
+#         super(WarmStartGradientReverseLayer, self).__init__()
+#         self.alpha = alpha
+#         self.lo = lo
+#         self.hi = hi
+#         self.iter_num = 0
+#         self.max_iters = max_iters
+#         self.auto_step = auto_step
+
+#     def forward(self, input: torch.Tensor) -> torch.Tensor:
+#         """"""
+#         coeff = np.float(
+#             2.0 * (self.hi - self.lo) / (1.0 + np.exp(-self.alpha * self.iter_num / self.max_iters))
+#             - (self.hi - self.lo) + self.lo
+#         )
+#         if self.auto_step:
+#             self.step()
+#         return GradientReverseFunction.apply(input, coeff)
+
+#     def step(self):
+#         """Increase iteration number :math:`i` by 1"""
+#         self.iter_num += 1
+
+# def binary_accuracy(output: torch.Tensor, target: torch.Tensor) -> float:
+#     """Computes the accuracy for binary classification"""
+#     with torch.no_grad():
+#         batch_size = target.size(0)
+#         pred = (output >= 0.5).float().t().view(-1)
+#         correct = pred.eq(target.view(-1)).float().sum()
+#         correct.mul_(100. / batch_size)
+#         return correct
+
+# class DomainDiscriminator(nn.Module):
+
+#     def __init__(self, in_feature: int, hidden_size: int):
+#         super(DomainDiscriminator, self).__init__()
+#         self.layer1 = nn.Linear(in_feature, hidden_size)
+#         self.bn1 = nn.BatchNorm1d(hidden_size)
+#         self.relu1 = nn.ReLU()
+#         self.layer2 = nn.Linear(hidden_size, hidden_size)
+#         self.bn2 = nn.BatchNorm1d(hidden_size)
+#         self.relu2 = nn.ReLU()
+#         self.layer3 = nn.Linear(hidden_size, 1)
+#         self.sigmoid = nn.Sigmoid()
+
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         """"""
+#         x = self.relu1(self.bn1(self.layer1(x)))
+#         x = self.relu2(self.bn2(self.layer2(x)))
+#         y = self.sigmoid(self.layer3(x))
+#         return y
+
+#     def get_parameters(self) -> List[Dict]:
+#         return [{"params": self.parameters(), "lr_mult": 1.}]
+
+# class DomainAdversarialLoss(nn.Module):
+
+#     def __init__(self, domain_discriminator: nn.Module, reduction: Optional[str] = 'mean'):
+#         super(DomainAdversarialLoss, self).__init__()
+#         self.grl = WarmStartGradientReverseLayer(alpha=1., lo=0., hi=1., max_iters=1000, auto_step=True)
+#         self.domain_discriminator = domain_discriminator
+#         self.bce = nn.BCELoss(reduction=reduction)
+#         self.domain_discriminator_accuracy = None
+
+#     def forward(self, f_s: torch.Tensor, f_t: torch.Tensor, w_s, w_t) -> torch.Tensor:
+#         f = self.grl(torch.cat((f_s, f_t), dim=0))
+#         d = self.domain_discriminator(f)
+#         d_s, d_t = d.chunk(2, dim=0)
+#         d_label_s = torch.ones((f_s.size(0), 1)).to(f_s.device)
+#         d_label_t = torch.zeros((f_t.size(0), 1)).to(f_t.device)
+#         self.domain_discriminator_accuracy = 0.5 * (binary_accuracy(d_s, d_label_s) + binary_accuracy(d_t, d_label_t))
+#         source_loss = torch.mean(w_s * self.bce(d_s, d_label_s).view(-1))
+#         target_loss = torch.mean(w_t * self.bce(d_t, d_label_t).view(-1))
+#         return 0.5 * (source_loss + target_loss)
