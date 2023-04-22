@@ -1,3 +1,7 @@
 # RST+Sphinx
 .vscode
 DA2L/pretrained/
+DA2L/data/domainnet/*/
+DA2L/data/office/*/
+DA2L/data/office-home/*/
+DA2L/data/visda-2017/*/

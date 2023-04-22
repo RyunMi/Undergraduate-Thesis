@@ -1,6 +1,6 @@
 data:
   dataset:
-    name: visda2017 # choices are ['office', 'officehome', 'caltech-imagenet', 'visda2017']
+    name: visda2017 # choices are ['office', 'officehome', 'visda-2017', 'domainnet']
     root_path: ../data/visda-2017 # /path/to/dataset/root
     source: 0 # source domain index
     target: 1 # target domain index
