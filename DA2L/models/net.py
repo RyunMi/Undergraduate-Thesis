@@ -169,7 +169,7 @@ class CLS(nn.Module):
             out.append(x)
         return out
 
-# 定义了一个名为adversarialnet的神经网络模型，用于对抗训练中的判别器任务。它继承了nn.Module类，
+# 定义了一个名为AdversarialNetwork的神经网络模型，用于对抗训练中的判别器任务。它继承了nn.Module类，
 # 其初始化函数__init__定义了一个由三个全连接层和两个ReLU激活函数以及一个Sigmoid激活函数组成的网络。
 # 该网络接受一个大小为in_feature的输入向量，并输出一个值在[0,1]之间的标量，代表输入样本为真实数据的概率。
 # 在网络结构中还使用了easydl库中的GradientReverseModule，该模块可以将反向传播过程中的梯度反转，用于实现领域自适应训练的方法。
@@ -177,23 +177,24 @@ class CLS(nn.Module):
 # coeff=0.0 + (2.0 / (1 + np.exp(- gamma * step * 1.0 / max_iter)) - 1.0) * (1.0 - 0.0)
 # forward函数将输入向量传递给GradientReverseModule和main子模块进行前向计算，最终输出模型的预测结果。
 
-class adversarialnet(nn.Module):
+class AdversarialNetwork(nn.Module):
     """
-    Discriminator network.
+    AdversarialNetwork with a gredient reverse layer.
+    its ``forward`` function calls gredient reverse layer first, then applies ``self.main`` module.
     """
     def __init__(self, in_feature):
-        super(adversarialnet, self).__init__()
+        super(AdversarialNetwork, self).__init__()
         self.main = nn.Sequential(
-            nn.Linear(in_feature, 16),
+            nn.Linear(in_feature, 1024),
             nn.ReLU(inplace=True),
             nn.Dropout(0.5),
-            nn.Linear(16,16),
+            nn.Linear(1024,1024),
             nn.ReLU(inplace=True),
             nn.Dropout(0.5),
-            nn.Linear(16, 1),
+            nn.Linear(1024, 1),
             nn.Sigmoid()
         )
-        self.grl = GradientReverseModule(lambda step: aToBSheduler(step, 0.0, 1.0, gamma=10, max_iter=100000))
+        self.grl = GradientReverseModule(lambda step: aToBSheduler(step, 0.0, 1.0, gamma=10, max_iter=10000))
 
     def forward(self, x):
         x_ = self.grl(x)

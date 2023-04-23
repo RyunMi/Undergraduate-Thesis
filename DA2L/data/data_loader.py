@@ -1,4 +1,4 @@
-from config import *
+from config.config import *
 from easydl import *
 from collections import Counter
 from torchvision.transforms.transforms import *
