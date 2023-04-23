@@ -6,7 +6,7 @@ from tqdm import tqdm
 if is_in_notebook():
     from tqdm import tqdm_notebook as tqdm
 from torch import optim
-from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 import torch.backends.cudnn as cudnn
 cudnn.benchmark = True
 cudnn.deterministic = True
