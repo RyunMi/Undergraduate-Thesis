@@ -22,6 +22,7 @@ train:
   lr: 0.01 # learning rate for new layers. learning rate for finetune is 1/10 of lr
   weight_decay: 0.0005
   momentum: 0.9
+  eps: 0.0014
 
 test:
   test_interval: 500 # interval of two continuous test phase

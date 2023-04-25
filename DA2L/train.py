@@ -66,14 +66,12 @@ class TotalNet(nn.Module):
         classifier_output_dim = len(source_classes)
         self.classifier = CLS(self.feature_extractor.output_num(), classifier_output_dim, bottle_neck_dim=256)
         self.discriminator = AdversarialNetwork(256)
-        self.discriminator_separate = AdversarialNetwork(256)
 
     def forward(self, x):
         f = self.feature_extractor(x)
         f, _, __, y = self.classifier(f)
         d = self.discriminator(_)
-        d_0 = self.discriminator_separate(_)
-        return y, d, d_0
+        return y, d
 
 
 totalNet = TotalNet()
@@ -81,7 +79,6 @@ totalNet = TotalNet()
 feature_extractor = nn.DataParallel(totalNet.feature_extractor, device_ids=gpu_ids, output_device=output_device).train(True)
 classifier = nn.DataParallel(totalNet.classifier, device_ids=gpu_ids, output_device=output_device).train(True)
 discriminator = nn.DataParallel(totalNet.discriminator, device_ids=gpu_ids, output_device=output_device).train(True)
-discriminator_separate = nn.DataParallel(totalNet.discriminator_separate, device_ids=gpu_ids, output_device=output_device).train(True)
 
 # ===================UDA代码测试部分(见eval.py)===================
 
@@ -107,9 +104,6 @@ optimizer_cls = OptimWithSheduler(
 optimizer_discriminator = OptimWithSheduler(
     optim.SGD(discriminator.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay, momentum=args.train.momentum, nesterov=True),
     scheduler)
-optimizer_discriminator_separate = OptimWithSheduler(
-    optim.SGD(discriminator_separate.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay, momentum=args.train.momentum, nesterov=True),
-    scheduler)
 
 # 变量global_step初始化为0，用于记录全局步数；变量best_acc初始化为0，用于记录最好的测试精度。
 # total_steps用于迭代全局步数，每次循环迭代时，将当前步数在进度条中显示。
@@ -124,13 +118,12 @@ epoch_id = 0
 while global_step < args.train.min_step:
 
     # iters用于迭代source_train_dl和target_train_dl数据集中的图像和标签，每次循环迭代时，将当前轮数在进度条中显示。
-
+    # 每次循环迭代中，将source数据集和target数据集中的图像和标签分别赋值给变量im_source、label_source和im_target、label_target。
     iters = tqdm(zip(source_train_dl, target_train_dl), desc=f'epoch {epoch_id} ', total=min(len(source_train_dl), len(target_train_dl)))
     epoch_id += 1
 
     for i, ((im_source, label_source), (im_target, label_target)) in enumerate(iters):
 
-        # 每次循环迭代中，将source数据集和target数据集中的图像和标签分别赋值给变量im_source、label_source和im_target、label_target。
         # save_label_target变量用于调试使用。 将label_source和label_target转换到输出设备。
         # 将label_target全部设置为0，用于指示这些图像是来自目标数据集的。
 
@@ -168,12 +161,20 @@ while global_step < args.train.min_step:
         domain_prob_discriminator_source = discriminator.forward(feature_source)
         domain_prob_discriminator_target = discriminator.forward(feature_target)
 
-        domain_prob_discriminator_source_separate = discriminator_separate.forward(feature_source.detach())
-        domain_prob_discriminator_target_separate = discriminator_separate.forward(feature_target.detach())
+        hat_source, max_value_source = perturb(im_source, fc2_s)
+        hat_target, max_value_target = perturb(im_target, fc2_t)
 
-        source_share_weight = get_source_share_weight(domain_prob_discriminator_source_separate, fc2_s, domain_temperature=1.0, class_temperature=10.0)
+        hat_fc1_s = feature_extractor.forward(hat_source)
+        hat_fc1_t = feature_extractor.forward(hat_target)
+
+        _, _, hat_fc_2_s, _ = classifier.forward(hat_fc1_s)
+        _, _, hat_fc_2_t, _ = classifier.forward(hat_fc1_t)
+
+        source_share_weight = get_source_share_weight(domain_prob_discriminator_source, hat_fc_2_s, max_value_source,
+                                                      domain_temperature=1.0, class_temperature=10.0)
         source_share_weight = normalize_weight(source_share_weight)
-        target_share_weight = get_target_share_weight(domain_prob_discriminator_target_separate, fc2_t, domain_temperature=1.0, class_temperature=1.0)
+        target_share_weight = get_target_share_weight(domain_prob_discriminator_target, hat_fc_2_t, max_value_target,
+                                                      domain_temperature=1.0, class_temperature=1.0)
         target_share_weight = normalize_weight(target_share_weight)
         
         # 这段代码计算了模型的损失函数。首先，计算了对抗损失（adv_loss）和单独判别器的对抗损失（adv_loss_separate）。
@@ -193,15 +194,12 @@ while global_step < args.train.min_step:
         tmp = target_share_weight * nn.BCELoss(reduction='none')(domain_prob_discriminator_target, torch.zeros_like(domain_prob_discriminator_target))
         adv_loss += torch.mean(tmp, dim=0, keepdim=True)
 
-        adv_loss_separate += nn.BCELoss()(domain_prob_discriminator_source_separate, torch.ones_like(domain_prob_discriminator_source_separate))
-        adv_loss_separate += nn.BCELoss()(domain_prob_discriminator_target_separate, torch.zeros_like(domain_prob_discriminator_target_separate))
-
         # ============================== cross entropy loss
         ce = nn.CrossEntropyLoss(reduction='none')(predict_prob_source, label_source)
         ce = torch.mean(ce, dim=0, keepdim=True)
 
         with OptimizerManager(
-                [optimizer_finetune, optimizer_cls, optimizer_discriminator, optimizer_discriminator_separate]):
+                [optimizer_finetune, optimizer_cls, optimizer_discriminator]):
             loss = ce + adv_loss + adv_loss_separate
             loss.backward()
 
@@ -244,7 +242,7 @@ while global_step < args.train.min_step:
         if global_step % args.test.test_interval == 0:
 
             counters = [AccuracyCounter() for x in range(len(source_classes) + 1)]
-            with TrainingModeManager([feature_extractor, classifier, discriminator_separate], train=False) as mgr, \
+            with TrainingModeManager([feature_extractor, classifier, discriminator], train=False) as mgr, \
                  Accumulator(['feature', 'predict_prob', 'label', 'domain_prob', 'before_softmax', 'target_share_weight']) as target_accumulator, \
                  torch.no_grad():
 
@@ -254,7 +252,7 @@ while global_step < args.train.min_step:
 
                     feature = feature_extractor.forward(im)
                     feature, __, before_softmax, predict_prob = classifier.forward(feature)
-                    domain_prob = discriminator_separate.forward(__)
+                    domain_prob = discriminator.forward(__)
 
                     target_share_weight = get_target_share_weight(domain_prob, before_softmax, domain_temperature=1.0,
                                                                   class_temperature=1.0)
@@ -294,7 +292,6 @@ while global_step < args.train.min_step:
                 "feature_extractor": feature_extractor.state_dict(),
                 'classifier': classifier.state_dict(),
                 'discriminator': discriminator.state_dict() if not isinstance(discriminator, Nonsense) else 1.0,
-                'discriminator_separate': discriminator_separate.state_dict(),
             }
 
             if acc_test > best_acc:
