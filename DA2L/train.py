@@ -65,20 +65,26 @@ class TotalNet(nn.Module):
         self.feature_extractor = model_dict[args.model.base_model](args.model.pretrained_model)
         classifier_output_dim = len(source_classes)
         self.classifier = CLS(self.feature_extractor.output_num(), classifier_output_dim, bottle_neck_dim=256)
-        self.discriminator = AdversarialNetwork(256)
+        self.domain_discriminator = AdversarialNetwork(256)
+        self.reuse_discriminator_s = AdversarialNetwork(256)
+        self.reuse_discriminator_t = AdversarialNetwork(256)
 
     def forward(self, x):
         f = self.feature_extractor(x)
         f, _, __, y = self.classifier(f)
-        d = self.discriminator(_)
-        return y, d
+        d = self.domain_discriminator(_)
+        hat_d_s = self.reuse_discriminator_s(_)
+        hat_d_t = self.reuse_discriminator_t(_)
+        return y, d, hat_d_s, hat_d_t
 
 
 totalNet = TotalNet()
 
 feature_extractor = nn.DataParallel(totalNet.feature_extractor, device_ids=gpu_ids, output_device=output_device).train(True)
 classifier = nn.DataParallel(totalNet.classifier, device_ids=gpu_ids, output_device=output_device).train(True)
-discriminator = nn.DataParallel(totalNet.discriminator, device_ids=gpu_ids, output_device=output_device).train(True)
+domain_discriminator = nn.DataParallel(totalNet.domain_discriminator, device_ids=gpu_ids, output_device=output_device).train(True)
+reuse_discriminator_s = nn.DataParallel(totalNet.reuse_discriminator_s, device_ids=gpu_ids, output_device=output_device).train(True)
+reuse_discriminator_t = nn.DataParallel(totalNet.reuse_discriminator_t, device_ids=gpu_ids, output_device=output_device).train(True)
 
 # ===================UDA代码测试部分(见eval.py)===================
 
@@ -101,8 +107,14 @@ optimizer_finetune = OptimWithSheduler(
 optimizer_cls = OptimWithSheduler(
     optim.SGD(classifier.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay, momentum=args.train.momentum, nesterov=True),
     scheduler)
-optimizer_discriminator = OptimWithSheduler(
-    optim.SGD(discriminator.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay, momentum=args.train.momentum, nesterov=True),
+optimizer_domain_discriminator = OptimWithSheduler(
+    optim.SGD(domain_discriminator.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay, momentum=args.train.momentum, nesterov=True),
+    scheduler)
+optimizer_reuse_discriminator_s = OptimWithSheduler(
+    optim.SGD(reuse_discriminator_s.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay, momentum=args.train.momentum, nesterov=True),
+    scheduler)
+optimizer_reuse_discriminator_t = OptimWithSheduler(
+    optim.SGD(reuse_discriminator_t.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay, momentum=args.train.momentum, nesterov=True),
     scheduler)
 
 # 变量global_step初始化为0，用于记录全局步数；变量best_acc初始化为0，用于记录最好的测试精度。
@@ -158,8 +170,8 @@ while global_step < args.train.min_step:
         fc1_s, feature_source, fc2_s, predict_prob_source = classifier.forward(fc1_s)
         fc1_t, feature_target, fc2_t, predict_prob_target = classifier.forward(fc1_t)
 
-        domain_prob_discriminator_source = discriminator.forward(feature_source)
-        domain_prob_discriminator_target = discriminator.forward(feature_target)
+        domain_prob_discriminator_source = domain_discriminator.forward(feature_source)
+        domain_prob_discriminator_target = domain_discriminator.forward(feature_target)
 
         hat_source, max_value_source = perturb(im_source, fc2_s)
         hat_target, max_value_target = perturb(im_target, fc2_t)
@@ -177,6 +189,22 @@ while global_step < args.train.min_step:
                                                       domain_temperature=1.0, class_temperature=1.0)
         target_share_weight = normalize_weight(target_share_weight)
         
+        for (each_feature, each_target_share_weight) in zip(feature_source, target_share_weight):
+            if target_share_weight < args.test.w_0:
+                reuse_prob_discriminator_private_t = reuse_discriminator_t.forward(each_feature)
+            else:
+                reuse_prob_discriminator_common_t = reuse_discriminator_t.forward(each_feature)
+            
+            target_reuse_weight = get_target_reuse_weight()
+        
+        for (each_feature, each_target_share_weight) in zip(feature_source, source_share_weight):
+            if source_share_weight < args.test.w_0:
+                reuse_prob_discriminator_private_s = reuse_discriminator_s.forward(each_feature)
+            else:
+                reuse_prob_discriminator_common_s = reuse_discriminator_s.forward(each_feature)
+
+            source_reuse_weight = get_source_reuse_weight()
+
         # 这段代码计算了模型的损失函数。首先，计算了对抗损失（adv_loss）和单独判别器的对抗损失（adv_loss_separate）。
         # 对于对抗损失，首先根据源域特征的权重计算源域的领域损失，其次，根据目标域特征的权重计算目标域的领域损失，最后将两者相加。
         # 对于单独判别器的对抗损失，分别计算源域和目标域的领域损失，然后相加。
@@ -185,22 +213,42 @@ while global_step < args.train.min_step:
         # 使用OptimizerManager来管理四个不同的优化器（optimizer_finetune、optimizer_cls、optimizer_discriminator
         # 和optimizer_discriminator_separate），以在反向传播时同时更新四个优化器的参数。
 
-        # ==============================compute loss
-        adv_loss = torch.zeros(1, 1).to(output_device)
-        adv_loss_separate = torch.zeros(1, 1).to(output_device)
+        # ============================= domain loss
+        dom_loss = torch.zeros(1, 1).to(output_device)
 
-        tmp = source_share_weight * nn.BCELoss(reduction='none')(domain_prob_discriminator_source, torch.ones_like(domain_prob_discriminator_source))
-        adv_loss += torch.mean(tmp, dim=0, keepdim=True)
-        tmp = target_share_weight * nn.BCELoss(reduction='none')(domain_prob_discriminator_target, torch.zeros_like(domain_prob_discriminator_target))
-        adv_loss += torch.mean(tmp, dim=0, keepdim=True)
+        tmp = source_share_weight * nn.BCELoss(reduction='none')(domain_prob_discriminator_source, 
+                                                                 torch.zeros_like(domain_prob_discriminator_source))
+        dom_loss += torch.mean(tmp, dim=0, keepdim=True)
+        tmp = target_share_weight * nn.BCELoss(reduction='none')(domain_prob_discriminator_target, 
+                                                                 torch.ones_like(domain_prob_discriminator_target))
+        dom_loss += torch.mean(tmp, dim=0, keepdim=True)
 
         # ============================== cross entropy loss
         ce = nn.CrossEntropyLoss(reduction='none')(predict_prob_source, label_source)
         ce = torch.mean(ce, dim=0, keepdim=True)
 
+        # ============================== reuse loss
+        dt_loss = torch.zeros(1, 1).to(output_device)
+
+        tmp = target_reuse_weight * (1 - target_share_weight) * nn.BCELoss(reduction='none')(reuse_prob_discriminator_private_t, 
+                                                                 torch.zeros_like(domain_prob_discriminator_source))
+        dt_loss += torch.mean(tmp, dim=0, keepdim=True)
+        tmp = nn.BCELoss(reduction='none')(reuse_prob_discriminator_common_t, 
+                                                                 torch.ones_like(domain_prob_discriminator_source))
+        dt_loss += torch.mean(tmp, dim=0, keepdim=True)
+
+        ds_loss = torch.zeros(1, 1).to(output_device)
+        tmp = source_reuse_weight * nn.BCELoss(reduction='none')(reuse_prob_discriminator_private_s, 
+                                                                 torch.zeros_like(domain_prob_discriminator_source))
+        ds_loss += torch.mean(tmp, dim=0, keepdim=True)
+        tmp = nn.BCELoss(reduction='none')(reuse_prob_discriminator_common_s, 
+                                                                 torch.ones_like(domain_prob_discriminator_source))
+        ds_loss += torch.mean(tmp, dim=0, keepdim=True)
+
         with OptimizerManager(
-                [optimizer_finetune, optimizer_cls, optimizer_discriminator]):
-            loss = ce + adv_loss + adv_loss_separate
+                [optimizer_finetune, optimizer_cls, optimizer_domain_discriminator,
+                  optimizer_reuse_discriminator_t, optimizer_reuse_discriminator_s]):
+            loss = ce + dom_loss + dt_loss + ds_loss
             loss.backward()
 
         # 首先，代码中的 global_step += 1 表示全局步数加一，用于记录当前训练的进度。
@@ -222,10 +270,11 @@ while global_step < args.train.min_step:
             counter = AccuracyCounter()
             counter.addOneBatch(variable_to_numpy(one_hot(label_source, len(source_classes))), variable_to_numpy(predict_prob_source))
             acc_train = torch.tensor([counter.reportAccuracy()]).to(output_device)
-            logger.add_scalar('adv_loss', adv_loss, global_step)
+            logger.add_scalar('dom_loss', dom_loss, global_step)
             logger.add_scalar('ce', ce, global_step)
-            logger.add_scalar('adv_loss_separate', adv_loss_separate, global_step)
             logger.add_scalar('acc_train', acc_train, global_step)
+            logger.add_scalar('dt_loss', dt_loss, global_step)
+            logger.add_scalar('ds_loss', ds_loss, global_step)
         
         # 这段代码是在每隔一定的步数后进行测试集的测试，并记录测试准确率。测试的过程中使用了累加器 Accumulator 
         # 来收集测试集上的预测结果和标签，然后使用 AccuracyCounter 计算每个类别的准确率。具体实现过程如下：
@@ -242,7 +291,7 @@ while global_step < args.train.min_step:
         if global_step % args.test.test_interval == 0:
 
             counters = [AccuracyCounter() for x in range(len(source_classes) + 1)]
-            with TrainingModeManager([feature_extractor, classifier, discriminator], train=False) as mgr, \
+            with TrainingModeManager([feature_extractor, classifier, domain_discriminator], train=False) as mgr, \
                  Accumulator(['feature', 'predict_prob', 'label', 'domain_prob', 'before_softmax', 'target_share_weight']) as target_accumulator, \
                  torch.no_grad():
 
@@ -252,10 +301,17 @@ while global_step < args.train.min_step:
 
                     feature = feature_extractor.forward(im)
                     feature, __, before_softmax, predict_prob = classifier.forward(feature)
-                    domain_prob = discriminator.forward(__)
 
-                    target_share_weight = get_target_share_weight(domain_prob, before_softmax, domain_temperature=1.0,
-                                                                  class_temperature=1.0)
+                    domain_prob = domain_discriminator.forward(__)
+
+                    hat, max_value = perturb(im, before_softmax)
+
+                    hat_feature = feature_extractor.forward(hat)
+
+                    _, _, hat_before_softmax, _ = classifier.forward(hat_feature)
+
+                    target_share_weight = get_target_share_weight(domain_prob, hat_before_softmax,  max_value,
+                                                                  domain_temperature=1.0, class_temperature=1.0)
 
                     for name in target_accumulator.names:
                         globals()[name] = variable_to_numpy(globals()[name])
@@ -291,7 +347,7 @@ while global_step < args.train.min_step:
             data = {
                 "feature_extractor": feature_extractor.state_dict(),
                 'classifier': classifier.state_dict(),
-                'discriminator': discriminator.state_dict() if not isinstance(discriminator, Nonsense) else 1.0,
+                'domain_discriminator': domain_discriminator.state_dict() if not isinstance(domain_discriminator, Nonsense) else 1.0,
             }
 
             if acc_test > best_acc:

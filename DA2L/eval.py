@@ -1,7 +1,7 @@
 from data.data_loader import *
 from models.net import *
 from models.utils import *
-from train import feature_extractor,classifier,discriminator,discriminator_separate,output_device
+from train import feature_extractor,classifier,domain_discriminator,output_device
 from tqdm import tqdm
 
 # 如果命令行参数args.test.test_only为True，那么代码会加载预训练模型的权重文件，然后使用该模型对测试集进行预测，并计算模型的测试准确率。
@@ -27,11 +27,10 @@ if args.test.test_only:
     data = torch.load(open(args.test.resume_file, 'rb'))
     feature_extractor.load_state_dict(data['feature_extractor'])
     classifier.load_state_dict(data['classifier'])
-    discriminator.load_state_dict(data['discriminator'])
-    discriminator_separate.load_state_dict(data['discriminator_separate'])
+    domain_discriminator.load_state_dict(data['domain_discriminator'])
 
     counters = [AccuracyCounter() for x in range(len(source_classes) + 1)]
-    with TrainingModeManager([feature_extractor, classifier, discriminator_separate], train=False) as mgr, \
+    with TrainingModeManager([feature_extractor, classifier, domain_discriminator], train=False) as mgr, \
             Accumulator(['feature', 'predict_prob', 'label', 'domain_prob', 'before_softmax',
                          'target_share_weight']) as target_accumulator, \
             torch.no_grad():
@@ -41,10 +40,17 @@ if args.test.test_only:
 
             feature = feature_extractor.forward(im)
             feature, __, before_softmax, predict_prob = classifier.forward(feature)
-            domain_prob = discriminator_separate.forward(__)
+            
+            domain_prob = domain_discriminator.forward(__)
 
-            target_share_weight = get_target_share_weight(domain_prob, before_softmax, domain_temperature=1.0,
-                                                          class_temperature=1.0)
+            hat, max_value = perturb(im, before_softmax)
+
+            hat_feature = feature_extractor.forward(hat)
+
+            _, _, hat_before_softmax, _ = classifier.forward(hat_feature)
+
+            target_share_weight = get_target_share_weight(domain_prob, hat_before_softmax,  max_value,
+                                                                  domain_temperature=1.0, class_temperature=1.0)
 
             for name in target_accumulator.names:
                 globals()[name] = variable_to_numpy(globals()[name])

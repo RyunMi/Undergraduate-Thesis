@@ -28,7 +28,7 @@ def perturb(inputs, before_softmax):
     d[0][2] = (d[0][2] )/(0.225)
     inputs_hat = torch.add(inputs.data, -args.train.eps, d)
 
-    return inputs_hat, max_value
+    return inputs_hat.detach(), max_value.detach()
 
 def reverse_sigmoid(y):
     return torch.log(y / (1.0 - y + 1e-10) + 1e-10)
@@ -54,10 +54,8 @@ def get_source_share_weight(domain_out, hat, max_value, domain_temperature=1.0, 
 
     return weight
 
-
-def get_target_share_weight(domain_out, before_softmax, domain_temperature=1.0, class_temperature=10.0):
-    return - get_source_share_weight(domain_out, before_softmax, domain_temperature, class_temperature)
-
+def get_target_share_weight(domain_out, hat, max_value, domain_temperature=1.0, class_temperature=10.0):
+    return - get_source_share_weight(domain_out, hat, max_value, domain_temperature, class_temperature)
 
 def normalize_weight(x):
     min_val = x.min()
@@ -65,3 +63,19 @@ def normalize_weight(x):
     x = (x - min_val) / (max_val - min_val)
     x = x / torch.mean(x)
     return x.detach()
+
+def get_target_reuse_weight():
+
+    return 
+
+def pseudo_label_calibration(pslab, weight):
+    weight = weight.transpose(1, 0).expand(pslab.shape[0], -1)
+    weight = normalize_weight(weight)
+    pslab = torch.exp(pslab)
+    pslab = pslab * weight
+    pslab = pslab / torch.sum(pslab, 1, keepdim=True)
+    return pslab
+
+def get_source_reuse_weight():
+
+    return 
