@@ -86,7 +86,82 @@ domain_discriminator = nn.DataParallel(totalNet.domain_discriminator, device_ids
 reuse_discriminator_s = nn.DataParallel(totalNet.reuse_discriminator_s, device_ids=gpu_ids, output_device=output_device).train(True)
 reuse_discriminator_t = nn.DataParallel(totalNet.reuse_discriminator_t, device_ids=gpu_ids, output_device=output_device).train(True)
 
-# ===================UDA代码测试部分(见eval.py)===================
+# 如果命令行参数args.test.test_only为True，那么代码会加载预训练模型的权重文件，然后使用该模型对测试集进行预测，并计算模型的测试准确率。
+# 首先，代码会通过torch.load函数加载预训练模型的权重文件，并使用load_state_dict函数将权重文件中的参数值加载到相应的网络模型中，
+# 包括feature_extractor、classifier、discriminator和discriminator_separate。
+# 然后，代码会创建一个长度为len(source_classes) + 1的列表counters，其中source_classes是源域的类别数。
+# 接下来，代码会创建一个TrainingModeManager对象，将三个网络模型(feature_extractor、classifier、discriminator_separate)
+# 的train参数都设为False，这样就可以在不更新网络权重的情况下进行测试。然后，代码会创建一个Accumulator对象target_accumulator，
+# 用于累积每个样本的feature、predict_prob、label、domain_prob、before_softmax和target_share_weight等数据，这些数据会在下面的计算中用到。
+# 接着，代码会通过一个for循环，对测试集中的每张图像进行预测。对于每张图像，代码会将其放到GPU上，并经过feature_extractor
+# 和classifier网络的前向传播计算，得到特征向量feature、输出概率predict_prob、真实标签label、领域概率domain_prob和未经softmax的输出
+# before_softmax。然后，代码会利用domain_prob和before_softmax计算每个目标样本的target_share_weight，表示样本对源域和目标域的贡献程度。
+# 在得到这些数据后，代码会通过globals()函数将这些数据转换为全局变量，并更新target_accumulator。
+# 接下来，代码会创建一个名为outlier的函数，该函数接收一个each_target_share_weight参数，
+# 如果each_target_share_weight小于阈值args.test.w_0，则返回True；否则返回False。
+# 然后，代码会创建一个长度为len(source_classes) + 1的counters列表，其中counters[i]表示源域中类别为i的样本的正确分类数和总数。
+# 接着，代码会通过一个for循环，对每个预测输出概率each_predict_prob、真实标签each_label和目标样本的target_share_weight进行遍历。
+# 如果each_label在源域中，则将其正确分类数和总数计入相应的counters中。如果each_label不在源域中，则将其正确分类数和总数计入counters[-1]中。
+# 最后，代码会计算每个counters的准确率
+
+if args.test.test_only:
+    assert os.path.exists(args.test.resume_file)
+    data = torch.load(open(args.test.resume_file, 'rb'))
+    feature_extractor.load_state_dict(data['feature_extractor'])
+    classifier.load_state_dict(data['classifier'])
+    domain_discriminator.load_state_dict(data['domain_discriminator'])
+
+    counters = [AccuracyCounter() for x in range(len(source_classes) + 1)]
+    with TrainingModeManager([feature_extractor, classifier, domain_discriminator], train=False) as mgr, \
+            Accumulator(['feature', 'predict_prob', 'label', 'domain_prob', 'before_softmax',
+                         'target_share_weight']) as target_accumulator, \
+            torch.no_grad():
+        for i, (im, label) in enumerate(tqdm(target_test_dl, desc='testing ')):
+            im = im.to(output_device)
+            label = label.to(output_device)
+
+            feature = feature_extractor.forward(im)
+            feature, __, before_softmax, predict_prob = classifier.forward(feature)
+            
+            domain_prob = domain_discriminator.forward(__)
+
+            hat, max_value = perturb(im, before_softmax)
+
+            hat_feature = feature_extractor.forward(hat)
+
+            _, _, hat_before_softmax, _ = classifier.forward(hat_feature)
+
+            target_share_weight = get_target_share_weight(domain_prob, hat_before_softmax,  max_value,
+                                                                  domain_temperature=1.0, class_temperature=1.0)
+
+            for name in target_accumulator.names:
+                globals()[name] = variable_to_numpy(globals()[name])
+
+            target_accumulator.updateData(globals())
+
+    for x in target_accumulator:
+        globals()[x] = target_accumulator[x]
+
+    def outlier(each_target_share_weight):
+        return each_target_share_weight < args.test.w_0
+
+    counters = [AccuracyCounter() for x in range(len(source_classes) + 1)]
+
+    for (each_predict_prob, each_label, each_target_share_weight) in zip(predict_prob, label, target_share_weight):
+        if each_label in source_classes:
+            counters[each_label].Ntotal += 1.0
+            each_pred_id = np.argmax(each_predict_prob)
+            if not outlier(each_target_share_weight[0]) and each_pred_id == each_label:
+                counters[each_label].Ncorrect += 1.0
+        else:
+            counters[-1].Ntotal += 1.0
+            if outlier(each_target_share_weight[0]):
+                counters[-1].Ncorrect += 1.0
+
+    acc_tests = [x.reportAccuracy() for x in counters if not np.isnan(x.reportAccuracy())]
+    acc_test = torch.ones(1, 1) * np.mean(acc_tests)
+    print(f'test accuracy is {acc_test.item()}')
+    exit(0)
 
 # 这段代码定义了四个优化器，分别用于调整四个不同的神经网络模块中的参数，即 feature_extractor、classifier、discriminator 
 # 和 discriminator_separate。这些优化器都是基于随机梯度下降 (SGD) 算法实现的，
@@ -176,11 +251,11 @@ while global_step < args.train.min_step:
         hat_source, max_value_source = perturb(im_source, fc2_s)
         hat_target, max_value_target = perturb(im_target, fc2_t)
 
-        hat_fc1_s = feature_extractor.forward(hat_source)
-        hat_fc1_t = feature_extractor.forward(hat_target)
+        hat_fc1_s = feature_extractor.forward(hat_source.detach())
+        hat_fc1_t = feature_extractor.forward(hat_target.detach())
 
-        _, _, hat_fc_2_s, _ = classifier.forward(hat_fc1_s)
-        _, _, hat_fc_2_t, _ = classifier.forward(hat_fc1_t)
+        _, _, hat_fc_2_s, _ = classifier.forward(hat_fc1_s.detach())
+        _, _, hat_fc_2_t, _ = classifier.forward(hat_fc1_t.detach())
 
         source_share_weight = get_source_share_weight(domain_prob_discriminator_source, hat_fc_2_s, max_value_source,
                                                       domain_temperature=1.0, class_temperature=10.0)
@@ -189,21 +264,20 @@ while global_step < args.train.min_step:
                                                       domain_temperature=1.0, class_temperature=1.0)
         target_share_weight = normalize_weight(target_share_weight)
         
-        for (each_feature, each_target_share_weight) in zip(feature_source, target_share_weight):
-            if target_share_weight < args.test.w_0:
-                reuse_prob_discriminator_private_t = reuse_discriminator_t.forward(each_feature)
-            else:
-                reuse_prob_discriminator_common_t = reuse_discriminator_t.forward(each_feature)
-            
-            target_reuse_weight = get_target_reuse_weight()
-        
-        for (each_feature, each_target_share_weight) in zip(feature_source, source_share_weight):
-            if source_share_weight < args.test.w_0:
-                reuse_prob_discriminator_private_s = reuse_discriminator_s.forward(each_feature)
-            else:
-                reuse_prob_discriminator_common_s = reuse_discriminator_s.forward(each_feature)
+        _, w_avg = pseudo_label_calibration(fc2_t, source_share_weight)
 
-            source_reuse_weight = get_source_reuse_weight()
+        feature_target_private, feature_target_common = common_private_spilt(target_share_weight, feature_target)
+        fc_target_private, _ = common_private_spilt(target_share_weight, fc2_t)
+        reuse_prob_discriminator_private_t = reuse_discriminator_t.forward(feature_target_private)
+        reuse_prob_discriminator_common_t1 = reuse_discriminator_t.forward(feature_target_common)
+
+        feature_source_private, _ = common_private_spilt(source_share_weight, feature_source)
+        fc_source_private, _ = common_private_spilt(source_share_weight, fc2_s)
+        reuse_prob_discriminator_private_s = reuse_discriminator_s.forward(feature_source_private)
+        reuse_prob_discriminator_common_t2 = reuse_discriminator_t.forward(feature_target_common)
+            
+        target_reuse_weight = get_target_reuse_weight(reuse_prob_discriminator_private_t, fc_target_private)
+        source_reuse_weight = get_source_reuse_weight(reuse_prob_discriminator_private_s, fc_source_private, w_avg)
 
         # 这段代码计算了模型的损失函数。首先，计算了对抗损失（adv_loss）和单独判别器的对抗损失（adv_loss_separate）。
         # 对于对抗损失，首先根据源域特征的权重计算源域的领域损失，其次，根据目标域特征的权重计算目标域的领域损失，最后将两者相加。
@@ -233,7 +307,7 @@ while global_step < args.train.min_step:
         tmp = target_reuse_weight * (1 - target_share_weight) * nn.BCELoss(reduction='none')(reuse_prob_discriminator_private_t, 
                                                                  torch.zeros_like(domain_prob_discriminator_source))
         dt_loss += torch.mean(tmp, dim=0, keepdim=True)
-        tmp = nn.BCELoss(reduction='none')(reuse_prob_discriminator_common_t, 
+        tmp = nn.BCELoss(reduction='none')(reuse_prob_discriminator_common_t1, 
                                                                  torch.ones_like(domain_prob_discriminator_source))
         dt_loss += torch.mean(tmp, dim=0, keepdim=True)
 
@@ -241,7 +315,7 @@ while global_step < args.train.min_step:
         tmp = source_reuse_weight * nn.BCELoss(reduction='none')(reuse_prob_discriminator_private_s, 
                                                                  torch.zeros_like(domain_prob_discriminator_source))
         ds_loss += torch.mean(tmp, dim=0, keepdim=True)
-        tmp = nn.BCELoss(reduction='none')(reuse_prob_discriminator_common_s, 
+        tmp = nn.BCELoss(reduction='none')(reuse_prob_discriminator_common_t2, 
                                                                  torch.ones_like(domain_prob_discriminator_source))
         ds_loss += torch.mean(tmp, dim=0, keepdim=True)
 
@@ -301,6 +375,9 @@ while global_step < args.train.min_step:
 
                     feature = feature_extractor.forward(im)
                     feature, __, before_softmax, predict_prob = classifier.forward(feature)
+                    
+                    before_softmax, _ = pseudo_label_calibration(before_softmax, source_share_weight)
+                    predict_prob = before_softmax.softmax(-1)
 
                     domain_prob = domain_discriminator.forward(__)
 

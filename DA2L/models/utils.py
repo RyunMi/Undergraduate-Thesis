@@ -64,7 +64,16 @@ def normalize_weight(x):
     x = x / torch.mean(x)
     return x.detach()
 
-def get_target_reuse_weight():
+def common_private_spilt(share_weight, feature):
+    indices_private = torch.nonzero(torch.lt(share_weight, args.test.w_0))
+    feature_privete = torch.index_select(feature, 0, indices_private[:, 0])
+
+    indices_common = torch.nonzero(torch.ge(share_weight, args.test.w_0))
+    feature_common = torch.index_select(feature, 0, indices_common[:, 0])
+
+    return feature_privete, feature_common
+
+def get_target_reuse_weight(reuse_out, fc):
 
     return 
 
@@ -74,8 +83,8 @@ def pseudo_label_calibration(pslab, weight):
     pslab = torch.exp(pslab)
     pslab = pslab * weight
     pslab = pslab / torch.sum(pslab, 1, keepdim=True)
-    return pslab
+    return pslab, weight
 
-def get_source_reuse_weight():
+def get_source_reuse_weight(reuse_out, fc, w_avg):
 
     return 
