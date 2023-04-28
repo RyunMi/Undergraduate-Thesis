@@ -66,18 +66,19 @@ def normalize_weight(x):
 
 def common_private_spilt(share_weight, feature):
     indices_private = torch.nonzero(torch.lt(share_weight, args.test.w_0))
-    feature_privete = torch.index_select(feature, 0, indices_private[:, 0])
+    feature_private = torch.index_select(feature, 0, indices_private[:, 0])
 
     indices_common = torch.nonzero(torch.ge(share_weight, args.test.w_0))
     feature_common = torch.index_select(feature, 0, indices_common[:, 0])
 
-    return feature_privete, feature_common
+    return feature_private, feature_common
 
-def get_target_reuse_weight(reuse_out, fc, commong_temperature=1.0):
+def get_target_reuse_weight(reuse_out, fc, reuse_temperature=1.0):
     reuse_logit = reverse_sigmoid(reuse_out)
-    reuse_logit = reuse_logit / commong_temperature
+    reuse_logit = reuse_logit / reuse_temperature
     reuse_out = nn.Sigmoid()(reuse_logit)
 
+    args.train.alpha
     return 
 
 def pseudo_label_calibration(pslab, weight):
@@ -88,7 +89,7 @@ def pseudo_label_calibration(pslab, weight):
     pslab = pslab / torch.sum(pslab, 1, keepdim=True)
     return pslab, weight
 
-def get_source_reuse_weight(reuse_out, fc, w_avg, reuse_temperature=1.0):
+def get_source_reuse_weight(reuse_out, fc, w_avg, reuse_temperature=1.0, common_temperature = 1.0):
     reuse_logit = reverse_sigmoid(reuse_out)
     reuse_logit = reuse_logit / reuse_temperature
     reuse_out = nn.Sigmoid()(reuse_logit)
@@ -97,10 +98,13 @@ def get_source_reuse_weight(reuse_out, fc, w_avg, reuse_temperature=1.0):
     fc = torch.index_select(fc, 1, label_ind[:, 0])
     fc = F.normalize(fc, p=1, dim=1)
     fc = TempScale(fc, 1000)
-    fc_softmax = torch.exp(fc) / torch.sum(torch.exp(fc), 1, keepdim=True)
+    fc_softmax = fc.softmax(1)
     max , _= fc_softmax.topk(2, dim=1, largest=True)
     class_tend = max[:,0]-max[:,1]
     class_tend = class_tend / torch.mean(class_tend)
+    class_tend = reverse_sigmoid(class_tend)
+    class_tend = class_tend / common_temperature
+    class_tend = nn.Sigmoid()(class_tend)
 
     w_r = torch.var(reuse_out) / (torch.var(reuse_out)+torch.var(class_tend)) * reuse_out + \
     torch.var(class_tend) / (torch.var(reuse_out)+torch.var(class_tend)) * class_tend

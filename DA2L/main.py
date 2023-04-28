@@ -258,27 +258,58 @@ while global_step < args.train.min_step:
         _, _, hat_fc_2_t, _ = classifier.forward(hat_fc1_t.detach())
 
         source_share_weight = get_source_share_weight(domain_prob_discriminator_source, hat_fc_2_s, max_value_source,
-                                                      domain_temperature=1.0, class_temperature=10.0)
+                                                      domain_temperature=1.0, class_temperature=1.0)
         source_share_weight = normalize_weight(source_share_weight)
         target_share_weight = get_target_share_weight(domain_prob_discriminator_target, hat_fc_2_t, max_value_target,
                                                       domain_temperature=1.0, class_temperature=1.0)
         target_share_weight = normalize_weight(target_share_weight)
         
-        _, w_avg = pseudo_label_calibration(fc2_t, source_share_weight)
+        fc2_t, w_avg = pseudo_label_calibration(fc2_t, source_share_weight)
 
         feature_target_private, feature_target_common = common_private_spilt(target_share_weight, feature_target)
-        fc_target_private, _ = common_private_spilt(target_share_weight, fc2_t)
-        reuse_prob_discriminator_private_t = reuse_discriminator_t.forward(feature_target_private)
-        reuse_prob_discriminator_common_t1 = reuse_discriminator_t.forward(feature_target_common)
+        
+        dt_loss = torch.zeros(1, 1).to(output_device)
+        ds_loss = torch.zeros(1, 1).to(output_device)
+        
+        if feature_target_private == torch.Size([]):
+            pass
+        else:
+            fc_target_private, _ = common_private_spilt(target_share_weight, fc2_t)
+            reuse_prob_discriminator_private_t = reuse_discriminator_t.forward(feature_target_private)
 
-        feature_source_private, _ = common_private_spilt(source_share_weight, feature_source)
-        fc_source_private, _ = common_private_spilt(source_share_weight, fc2_s)
-        reuse_prob_discriminator_private_s = reuse_discriminator_s.forward(feature_source_private)
-        reuse_prob_discriminator_common_t2 = reuse_discriminator_t.forward(feature_target_common)
+            target_reuse_weight = get_target_reuse_weight(reuse_prob_discriminator_private_t, fc_target_private)
+            tmp = target_reuse_weight * (1 - target_share_weight) * nn.BCELoss(reduction='none')(reuse_prob_discriminator_private_t, 
+                                                                 torch.zeros_like(reuse_prob_discriminator_private_t))
+            dt_loss += torch.mean(tmp, dim=0, keepdim=True)
+
+        if feature_target_common == torch.Size([]):
+            pass
+        else:
+            reuse_prob_discriminator_common_t1 = reuse_discriminator_t.forward(feature_target_common)
+            tmp = nn.BCELoss(reduction='none')(reuse_prob_discriminator_common_t1, 
+                                                                 torch.ones_like(reuse_prob_discriminator_common_t1))
+            dt_loss += torch.mean(tmp, dim=0, keepdim=True)
             
-        target_reuse_weight = get_target_reuse_weight(reuse_prob_discriminator_private_t, fc_target_private)
-        source_reuse_weight = get_source_reuse_weight(reuse_prob_discriminator_private_s, fc_source_private, w_avg)
-
+            reuse_prob_discriminator_common_t2 = reuse_discriminator_t.forward(feature_target_common)
+            tmp = nn.BCELoss(reduction='none')(reuse_prob_discriminator_common_t2, 
+                                                                 torch.ones_like(reuse_prob_discriminator_common_t2))
+            ds_loss += torch.mean(tmp, dim=0, keepdim=True)
+        
+        feature_source_private, _ = common_private_spilt(source_share_weight, feature_source)
+        
+        if feature_source_private == torch.Size([]):
+            pass
+        else:
+            fc_source_private, _ = common_private_spilt(source_share_weight, fc2_s)
+            reuse_prob_discriminator_private_s = reuse_discriminator_s.forward(feature_source_private)
+            
+            
+            source_reuse_weight = get_source_reuse_weight(reuse_prob_discriminator_private_s, fc_source_private, w_avg, 
+                                                      reuse_temperature=1.0, common_temperature = 1.0)
+            tmp = source_reuse_weight * nn.BCELoss(reduction='none')(reuse_prob_discriminator_private_s, 
+                                                                 torch.zeros_like(reuse_prob_discriminator_private_s))
+            ds_loss += torch.mean(tmp, dim=0, keepdim=True)
+            
         # 这段代码计算了模型的损失函数。首先，计算了对抗损失（adv_loss）和单独判别器的对抗损失（adv_loss_separate）。
         # 对于对抗损失，首先根据源域特征的权重计算源域的领域损失，其次，根据目标域特征的权重计算目标域的领域损失，最后将两者相加。
         # 对于单独判别器的对抗损失，分别计算源域和目标域的领域损失，然后相加。
@@ -300,24 +331,6 @@ while global_step < args.train.min_step:
         # ============================== cross entropy loss
         ce = nn.CrossEntropyLoss(reduction='none')(predict_prob_source, label_source)
         ce = torch.mean(ce, dim=0, keepdim=True)
-
-        # ============================== reuse loss
-        dt_loss = torch.zeros(1, 1).to(output_device)
-
-        tmp = target_reuse_weight * (1 - target_share_weight) * nn.BCELoss(reduction='none')(reuse_prob_discriminator_private_t, 
-                                                                 torch.zeros_like(domain_prob_discriminator_source))
-        dt_loss += torch.mean(tmp, dim=0, keepdim=True)
-        tmp = nn.BCELoss(reduction='none')(reuse_prob_discriminator_common_t1, 
-                                                                 torch.ones_like(domain_prob_discriminator_source))
-        dt_loss += torch.mean(tmp, dim=0, keepdim=True)
-
-        ds_loss = torch.zeros(1, 1).to(output_device)
-        tmp = source_reuse_weight * nn.BCELoss(reduction='none')(reuse_prob_discriminator_private_s, 
-                                                                 torch.zeros_like(domain_prob_discriminator_source))
-        ds_loss += torch.mean(tmp, dim=0, keepdim=True)
-        tmp = nn.BCELoss(reduction='none')(reuse_prob_discriminator_common_t2, 
-                                                                 torch.ones_like(domain_prob_discriminator_source))
-        ds_loss += torch.mean(tmp, dim=0, keepdim=True)
 
         with OptimizerManager(
                 [optimizer_finetune, optimizer_cls, optimizer_domain_discriminator,

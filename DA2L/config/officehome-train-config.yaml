@@ -23,6 +23,7 @@ train:
   weight_decay: 0.0005
   momentum: 0.9
   eps: 0.0014
+  alpha: 0.6
 
 test:
   test_interval: 500 # interval of two continuous test phase
