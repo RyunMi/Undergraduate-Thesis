@@ -33,7 +33,7 @@ def perturb(inputs, before_softmax):
 def reverse_sigmoid(y):
     return torch.log(y / (1.0 - y + 1e-10) + 1e-10)
 
-def get_source_share_weight(domain_out, hat, max_value, domain_temperature=1.0, class_temperature=10.0):
+def get_source_share_weight(domain_out, hat, max_value, domain_temperature=1.0, class_temperature=1.0):
     domain_logit = reverse_sigmoid(domain_out)
     domain_logit = domain_logit / domain_temperature
     domain_out = nn.Sigmoid()(domain_logit)
@@ -54,7 +54,7 @@ def get_source_share_weight(domain_out, hat, max_value, domain_temperature=1.0, 
 
     return weight
 
-def get_target_share_weight(domain_out, hat, max_value, domain_temperature=1.0, class_temperature=10.0):
+def get_target_share_weight(domain_out, hat, max_value, domain_temperature=1.0, class_temperature=1.0):
     return - get_source_share_weight(domain_out, hat, max_value, domain_temperature, class_temperature)
 
 def normalize_weight(x):
@@ -73,7 +73,10 @@ def common_private_spilt(share_weight, feature):
 
     return feature_privete, feature_common
 
-def get_target_reuse_weight(reuse_out, fc):
+def get_target_reuse_weight(reuse_out, fc, commong_temperature=1.0):
+    reuse_logit = reverse_sigmoid(reuse_out)
+    reuse_logit = reuse_logit / commong_temperature
+    reuse_out = nn.Sigmoid()(reuse_logit)
 
     return 
 
@@ -85,6 +88,21 @@ def pseudo_label_calibration(pslab, weight):
     pslab = pslab / torch.sum(pslab, 1, keepdim=True)
     return pslab, weight
 
-def get_source_reuse_weight(reuse_out, fc, w_avg):
+def get_source_reuse_weight(reuse_out, fc, w_avg, reuse_temperature=1.0):
+    reuse_logit = reverse_sigmoid(reuse_out)
+    reuse_logit = reuse_logit / reuse_temperature
+    reuse_out = nn.Sigmoid()(reuse_logit)
 
-    return 
+    label_ind = torch.nonzero(torch.ge(w_avg, args.test.w_0))
+    fc = torch.index_select(fc, 1, label_ind[:, 0])
+    fc = F.normalize(fc, p=1, dim=1)
+    fc = TempScale(fc, 1000)
+    fc_softmax = torch.exp(fc) / torch.sum(torch.exp(fc), 1, keepdim=True)
+    max , _= fc_softmax.topk(2, dim=1, largest=True)
+    class_tend = max[:,0]-max[:,1]
+    class_tend = class_tend / torch.mean(class_tend)
+
+    w_r = torch.var(reuse_out) / (torch.var(reuse_out)+torch.var(class_tend)) * reuse_out + \
+    torch.var(class_tend) / (torch.var(reuse_out)+torch.var(class_tend)) * class_tend
+
+    return w_r
