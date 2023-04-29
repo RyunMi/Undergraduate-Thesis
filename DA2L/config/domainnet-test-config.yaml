@@ -24,6 +24,7 @@ train:
   momentum: 0.9
   eps: 0.0014
   alpha: 0.6
+  temp: 0.8
 
 test:
   test_interval: 500 # interval of two continuous test phase
