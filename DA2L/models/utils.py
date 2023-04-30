@@ -88,8 +88,16 @@ def get_target_reuse_weight(reuse_out, fc, reuse_temperature=1.0, common_tempera
     # class_tend = class_tend / common_temperature
     # class_tend = nn.Sigmoid()(class_tend)
     
-    w_r = (torch.var(reuse_out) / (torch.var(reuse_out)+torch.var(class_tend)) * reuse_out).view(-1) + \
-    (torch.var(class_tend) / (torch.var(reuse_out)+torch.var(class_tend)) * class_tend).view(-1)
+    w_r1 = torch.var(reuse_out)
+    w_r2 = torch.var(class_tend)
+    w_r1 = torch.where(torch.isnan(w_r1), torch.full_like(w_r1, 0), w_r1)
+    w_r2 = torch.where(torch.isnan(w_r2), torch.full_like(w_r2, 0), w_r2)
+
+    if w_r1 or w_r2:
+        w_r = (w_r1 / (w_r1 + w_r2) * reuse_out).view(-1) + \
+    (w_r2 / (w_r1 + w_r2) * class_tend).view(-1)
+    else: 
+        w_r = reuse_out.view(-1) + class_tend.view(-1)
     w_r = w_r.detach()
 
     return w_r
@@ -125,8 +133,16 @@ def get_source_reuse_weight(reuse_out, fc, w_avg, reuse_temperature=1.0, common_
     # class_tend = class_tend / common_temperature
     # class_tend = nn.Sigmoid()(class_tend)
 
-    w_r = (torch.var(reuse_out) / (torch.var(reuse_out)+torch.var(class_tend)) * reuse_out).view(-1) + \
-    (torch.var(class_tend) / (torch.var(reuse_out)+torch.var(class_tend)) * class_tend).view(-1)
+    w_r1 = torch.var(reuse_out)
+    w_r2 = torch.var(class_tend)
+    w_r1 = torch.where(torch.isnan(w_r1), torch.full_like(w_r1, 0), w_r1)
+    w_r2 = torch.where(torch.isnan(w_r2), torch.full_like(w_r2, 0), w_r2)
+
+    if w_r1 or w_r2:
+        w_r = (w_r1 / (w_r1 + w_r2) * reuse_out).view(-1) + \
+    (w_r2 / (w_r1 + w_r2) * class_tend).view(-1)
+    else: 
+        w_r = reuse_out.view(-1) + class_tend.view(-1)
     w_r = w_r.detach()
 
     return w_r

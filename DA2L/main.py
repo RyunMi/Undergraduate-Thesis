@@ -6,8 +6,8 @@ from tqdm import tqdm
 if is_in_notebook():
     from tqdm import tqdm_notebook as tqdm
 from torch import optim
-from torch.utils.tensorboard import SummaryWriter
-# from tensorboardX import SummaryWriter
+#from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
 import torch.backends.cudnn as cudnn
 
 cudnn.benchmark = True
@@ -194,11 +194,11 @@ while global_step < args.train.min_step:
         if epoch_id != 1:
             predict_prob_target = predict_prob_target * (1 - args.train.alpha)
             predict_prob_target = predict_prob_target.add(stable_softmax[(global_step % total_epoch) 
-                * args.data.dataloader.batch_size : ((global_step + 1) % total_epoch) * args.data.dataloader.batch_size],
-                  alpha = args.train.alpha)
+                * args.data.dataloader.batch_size : (global_step % total_epoch + 1) * args.data.dataloader.batch_size],
+                alpha = args.train.alpha)
             
         stable_softmax[(global_step % total_epoch) * args.data.dataloader.batch_size : 
-                           ((global_step + 1) % total_epoch) * args.data.dataloader.batch_size] \
+                        (global_step % total_epoch + 1) * args.data.dataloader.batch_size] \
             = predict_prob_target.clone()
 
         # Output of Domain Discriminator
@@ -217,23 +217,23 @@ while global_step < args.train.min_step:
 
         # w_s and w_t
         source_share_weight = get_source_share_weight(domain_prob_discriminator_source, hat_fc_2_s, max_value_source,
-                                                      domain_temperature=1.0, class_temperature=1.0)
+                                                    domain_temperature=1.0, class_temperature=1.0)
         source_share_weight = normalize_weight(source_share_weight)
         target_share_weight = get_target_share_weight(domain_prob_discriminator_target, hat_fc_2_t, max_value_target,
-                                                      domain_temperature=1.0, class_temperature=1.0)
+                                                    domain_temperature=1.0, class_temperature=1.0)
         target_share_weight = normalize_weight(target_share_weight)
         
         # Pseudo Label Calibration
         source_share_weight_epoch[(global_step % total_epoch) * args.data.dataloader.batch_size : 
-                           ((global_step + 1) % total_epoch) * args.data.dataloader.batch_size] \
+                        (global_step % total_epoch + 1) * args.data.dataloader.batch_size] \
             = source_share_weight.clone()
         label_source_epoch[(global_step % total_epoch) * args.data.dataloader.batch_size : 
-                           ((global_step + 1) % total_epoch) * args.data.dataloader.batch_size] \
+                        (global_step % total_epoch + 1) * args.data.dataloader.batch_size] \
             = label_source.clone()
         
         if epoch_id == 1:
-            w_avg = compute_avg_weight(source_share_weight_epoch[0 : ((global_step + 1) % total_epoch) * args.data.dataloader.batch_size],
-         label_source_epoch[0 : ((global_step + 1) % total_epoch) * args.data.dataloader.batch_size], w_avg)
+            w_avg = compute_avg_weight(source_share_weight_epoch[0 : (global_step % total_epoch + 1) * args.data.dataloader.batch_size],
+        label_source_epoch[0 : (global_step % total_epoch + 1) * args.data.dataloader.batch_size], w_avg)
             _, w_avg = pseudo_label_calibration(predict_prob_target, w_avg)
         else:
             w_avg = compute_avg_weight(source_share_weight_epoch, label_source_epoch, w_avg)
@@ -262,12 +262,12 @@ while global_step < args.train.min_step:
         else:
             reuse_prob_discriminator_common_t1 = reuse_discriminator_t.forward(feature_target_common)
             tmp = nn.BCELoss(reduction='none')(reuse_prob_discriminator_common_t1, 
-                                                                 torch.ones_like(reuse_prob_discriminator_common_t1))
+                                                                torch.ones_like(reuse_prob_discriminator_common_t1))
             dt_loss += torch.mean(tmp, dim=0, keepdim=True)
             
             reuse_prob_discriminator_common_t2 = reuse_discriminator_t.forward(feature_target_common)
             tmp = nn.BCELoss(reduction='none')(reuse_prob_discriminator_common_t2, 
-                                                                 torch.ones_like(reuse_prob_discriminator_common_t2))
+                                                                torch.ones_like(reuse_prob_discriminator_common_t2))
             ds_loss += torch.mean(tmp, dim=0, keepdim=True)
         
         feature_source_private, _ = common_private_spilt(source_share_weight, feature_source)
@@ -280,19 +280,19 @@ while global_step < args.train.min_step:
             
             
             source_reuse_weight = get_source_reuse_weight(reuse_prob_discriminator_private_s, fc_source_private, w_avg, 
-                                                      reuse_temperature=1.0, common_temperature = 1.0)
+                                                    reuse_temperature=1.0, common_temperature = 1.0)
             tmp = source_reuse_weight * nn.BCELoss(reduction='none')(reuse_prob_discriminator_private_s, 
-                                                                 torch.zeros_like(reuse_prob_discriminator_private_s)).view(-1)
+                                                                torch.zeros_like(reuse_prob_discriminator_private_s)).view(-1)
             ds_loss += torch.mean(tmp, dim=0, keepdim=True)
 
         # ============================= domain loss
         dom_loss = torch.zeros(1, 1).to(output_device)
 
         tmp = source_share_weight * nn.BCELoss(reduction='none')(domain_prob_discriminator_source, 
-                                                                 torch.zeros_like(domain_prob_discriminator_source))
+                                                                torch.zeros_like(domain_prob_discriminator_source))
         dom_loss += torch.mean(tmp, dim=0, keepdim=True)
         tmp = target_share_weight * nn.BCELoss(reduction='none')(domain_prob_discriminator_target, 
-                                                                 torch.ones_like(domain_prob_discriminator_target))
+                                                                torch.ones_like(domain_prob_discriminator_target))
         dom_loss += torch.mean(tmp, dim=0, keepdim=True)
 
         # ============================== cross entropy loss
@@ -301,7 +301,7 @@ while global_step < args.train.min_step:
 
         with OptimizerManager(
                 [optimizer_finetune, optimizer_cls, optimizer_domain_discriminator,
-                  optimizer_reuse_discriminator_t, optimizer_reuse_discriminator_s]):
+                optimizer_reuse_discriminator_t, optimizer_reuse_discriminator_s]):
             loss = ce + dom_loss + dt_loss + ds_loss
             loss.backward()
 
@@ -323,8 +323,8 @@ while global_step < args.train.min_step:
 
             counters = [AccuracyCounter() for x in range(len(source_classes) + 1)]
             with TrainingModeManager([feature_extractor, classifier, domain_discriminator], train=False) as mgr, \
-                 Accumulator(['feature', 'predict_prob', 'label', 'domain_prob', 'before_softmax', 'target_share_weight']) as target_accumulator, \
-                 torch.no_grad():
+                Accumulator(['feature', 'predict_prob', 'label', 'domain_prob', 'before_softmax', 'target_share_weight']) as target_accumulator, \
+                torch.no_grad():
 
                 for i, (im, label) in enumerate(tqdm(target_test_dl, desc='testing ')):
                     im = im.to(output_device)
@@ -345,7 +345,7 @@ while global_step < args.train.min_step:
                     _, _, hat_before_softmax, _ = classifier.forward(hat_feature)
 
                     target_share_weight = get_target_share_weight(domain_prob, hat_before_softmax,  max_value,
-                                                                  domain_temperature=1.0, class_temperature=1.0)
+                                                                domain_temperature=1.0, class_temperature=1.0)
 
                     for name in target_accumulator.names:
                         globals()[name] = variable_to_numpy(globals()[name])
@@ -361,7 +361,7 @@ while global_step < args.train.min_step:
             counters = [AccuracyCounter() for x in range(len(source_classes) + 1)]
 
             for (each_predict_prob, each_label, each_target_share_weight) in zip(predict_prob, label,
-                                                                                 target_share_weight):
+                                                                                target_share_weight):
                 if each_label in source_classes:
                     counters[each_label].Ntotal += 1.0
                     each_pred_id = np.argmax(each_predict_prob)
