@@ -1,7 +1,7 @@
 data:
   dataset:
     name: domainnet # choices are ['office', 'officehome', 'visda-2017', 'domainnet']
-    root_path: ../data/domainnet # /path/to/dataset/root
+    root_path: data/domainnet # /path/to/dataset/root
     source: 2 # source domain index
     target: 4 # target domain index
     n_share: 150 # number of classes to be shared

@@ -7,6 +7,7 @@ if is_in_notebook():
     from tqdm import tqdm_notebook as tqdm
 from torch import optim
 from torch.utils.tensorboard import SummaryWriter
+# from tensorboardX import SummarWriter
 import torch.backends.cudnn as cudnn
 
 cudnn.benchmark = True
@@ -59,10 +60,15 @@ class TotalNet(nn.Module):
 totalNet = TotalNet()
 
 feature_extractor = nn.DataParallel(totalNet.feature_extractor, device_ids=gpu_ids, output_device=output_device).train(True)
+feature_extractor.to(output_device)
 classifier = nn.DataParallel(totalNet.classifier, device_ids=gpu_ids, output_device=output_device).train(True)
+classifier.to(output_device)
 domain_discriminator = nn.DataParallel(totalNet.domain_discriminator, device_ids=gpu_ids, output_device=output_device).train(True)
+domain_discriminator.to(output_device)
 reuse_discriminator_s = nn.DataParallel(totalNet.reuse_discriminator_s, device_ids=gpu_ids, output_device=output_device).train(True)
+reuse_discriminator_s.to(output_device)
 reuse_discriminator_t = nn.DataParallel(totalNet.reuse_discriminator_t, device_ids=gpu_ids, output_device=output_device).train(True)
+reuse_discriminator_t.to(output_device)
 
 # =================== evaluation
 if args.test.test_only:
@@ -152,7 +158,7 @@ best_acc = 0
 
 total_steps = tqdm(range(args.train.min_step),desc='global step')
 epoch_id = 0
-stable_softmax=torch.zeros((len(target_train_dl), len(common_classes))).to(output_device)
+stable_softmax=torch.zeros((len(target_train_dl) * args.data.dataloader.batch_size, len(source_classes))).to(output_device)
 
 # =================== train
 while global_step < args.train.min_step:

@@ -19,9 +19,9 @@ parser.add_argument('--config', type=str, default='config.yaml', help='/path/to/
 
 args = parser.parse_args()
 config_file = args.config
-args = yaml.load(open(config_file))
+args = yaml.safe_load(open(config_file))
 
-save_config = yaml.load(open(config_file))
+save_config = yaml.safe_load(open(config_file))
 
 args = easydict.EasyDict(args)
 
