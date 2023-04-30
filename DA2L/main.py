@@ -158,13 +158,15 @@ best_acc = 0
 
 total_steps = tqdm(range(args.train.min_step),desc='global step')
 epoch_id = 0
-stable_softmax=torch.zeros((len(target_train_dl) * args.data.dataloader.batch_size, len(source_classes))).to(output_device)
+total_epoch = min(len(source_train_dl), len(target_train_dl))
+stable_softmax = torch.zeros((total_epoch * args.data.dataloader.batch_size, len(source_classes))).to(output_device)
+source_share_weight_epoch = torch.zeros(total_epoch * args.data.dataloader.batch_size).to(output_device)
+w_avg = torch.zeros(len(source_classes)).to(output_device)
 
 # =================== train
 while global_step < args.train.min_step:
 
-    iters = tqdm(zip(source_train_dl, target_train_dl), desc=f'epoch {epoch_id} ', 
-                 total=min(len(source_train_dl), len(target_train_dl)))
+    iters = tqdm(zip(source_train_dl, target_train_dl), desc=f'epoch {epoch_id} ', total=total_epoch)
     epoch_id += 1
 
     for i, ((im_source, label_source), (im_target, label_target)) in enumerate(iters):
@@ -190,11 +192,12 @@ while global_step < args.train.min_step:
         # Temporal Ensembling
         if epoch_id != 1:
             predict_prob_target = predict_prob_target * (1 - args.train.alpha)
-            predict_prob_target = predict_prob_target.add(stable_softmax[global_step * args.data.dataloader.batch_size : 
-                             (global_step + 1) * args.data.dataloader.batch_size], alpha = args.train.alpha)
+            predict_prob_target = predict_prob_target.add(stable_softmax[(global_step % total_epoch) 
+                * args.data.dataloader.batch_size : ((global_step + 1) % total_epoch) * args.data.dataloader.batch_size],
+                  alpha = args.train.alpha)
             
-        stable_softmax[global_step * args.data.dataloader.batch_size : 
-                           (global_step + 1) * args.data.dataloader.batch_size] \
+        stable_softmax[(global_step % total_epoch) * args.data.dataloader.batch_size : 
+                           ((global_step + 1) % total_epoch) * args.data.dataloader.batch_size] \
             = predict_prob_target.clone()
 
         # Output of Domain Discriminator
@@ -202,8 +205,8 @@ while global_step < args.train.min_step:
         domain_prob_discriminator_target = domain_discriminator.forward(feature_target)
 
         # Adversarial perturbation
-        hat_source, max_value_source = perturb(im_source, predict_prob_source)
-        hat_target, max_value_target = perturb(im_target, predict_prob_target)
+        hat_source, max_value_source = perturb(im_source, feature_extractor, classifier)
+        hat_target, max_value_target = perturb(im_target, feature_extractor, classifier)
 
         hat_fc1_s = feature_extractor.forward(hat_source.detach())
         hat_fc1_t = feature_extractor.forward(hat_target.detach())
@@ -211,7 +214,7 @@ while global_step < args.train.min_step:
         _, _, hat_fc_2_s, _ = classifier.forward(hat_fc1_s.detach())
         _, _, hat_fc_2_t, _ = classifier.forward(hat_fc1_t.detach())
 
-        # w_s & w_t
+        # w_s and w_t
         source_share_weight = get_source_share_weight(domain_prob_discriminator_source, hat_fc_2_s, max_value_source,
                                                       domain_temperature=1.0, class_temperature=1.0)
         source_share_weight = normalize_weight(source_share_weight)
@@ -220,9 +223,17 @@ while global_step < args.train.min_step:
         target_share_weight = normalize_weight(target_share_weight)
         
         # Pseudo Label Calibration
-        predict_prob_target, w_avg = pseudo_label_calibration(predict_prob_target, source_share_weight)
+        source_share_weight_epoch[(global_step % total_epoch) * args.data.dataloader.batch_size : 
+                           ((global_step + 1) % total_epoch) * args.data.dataloader.batch_size] \
+            = source_share_weight
+        w_avg = compute_avg_weight(source_share_weight_epoch, label_source, w_avg)
 
-        # Reuse Detect & Reuse Loss
+        if epoch_id == 1:
+            _, w_avg = pseudo_label_calibration(predict_prob_target, w_avg)
+        else:
+            predict_prob_target, w_avg = pseudo_label_calibration(predict_prob_target, w_avg)
+
+        # Reuse Detect and Reuse Loss
         feature_target_private, feature_target_common = common_private_spilt(target_share_weight, feature_target)
         
         dt_loss = torch.zeros(1, 1).to(output_device)

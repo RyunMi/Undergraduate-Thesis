@@ -14,7 +14,12 @@ def seed_everything(seed=1234):
 def TempScale(p, t):
     return p / t
 
-def perturb(inputs, softmax_score):
+def perturb(inputs, feature_extractor, classifier):
+    feature_extractor.eval()
+    inputs.requires_grad = True
+    features = feature_extractor.forward(inputs)
+    score = classifier.forward(features)
+    softmax_score = TempScale(score, args.train.temp).softmax(1)
     max_value, max_target = torch.max(softmax_score, dim=1)
     xent = F.cross_entropy(softmax_score, max_target.long())
     d = torch.autograd.grad(xent, inputs)[0]
@@ -88,6 +93,12 @@ def get_target_reuse_weight(reuse_out, fc, reuse_temperature=1.0, common_tempera
     w_r = w_r.detach()
 
     return w_r
+
+def compute_avg_weight(weight, label, class_weight):
+    for i in range(len(class_weight)):
+        mask = (label == i)
+        class_weight[i] = weight[mask].mean()
+    return class_weight
 
 def pseudo_label_calibration(pslab, weight):
     weight = weight.transpose(1, 0).expand(pslab.shape[0], -1)
