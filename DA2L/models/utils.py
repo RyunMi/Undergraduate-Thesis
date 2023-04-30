@@ -18,7 +18,7 @@ def perturb(inputs, feature_extractor, classifier):
     feature_extractor.eval()
     inputs.requires_grad = True
     features = feature_extractor.forward(inputs)
-    score = classifier.forward(features)
+    _, _, score, _ = classifier.forward(features)
     softmax_score = TempScale(score, args.train.temp).softmax(1)
     max_value, max_target = torch.max(softmax_score, dim=1)
     xent = F.cross_entropy(softmax_score, max_target.long())
@@ -80,16 +80,16 @@ def get_target_reuse_weight(reuse_out, fc, reuse_temperature=1.0, common_tempera
     reuse_logit = reverse_sigmoid(reuse_out)
     reuse_logit = reuse_logit / reuse_temperature
     reuse_out = nn.Sigmoid()(reuse_logit)
-
+    
     max , _= fc.topk(2, dim=1, largest=True)
     class_tend = max[:,0]-max[:,1]
     class_tend = class_tend / torch.mean(class_tend)
-    class_tend = reverse_sigmoid(class_tend)
-    class_tend = class_tend / common_temperature
-    class_tend = nn.Sigmoid()(class_tend)
-
-    w_r = torch.var(reuse_out) / (torch.var(reuse_out)+torch.var(class_tend)) * reuse_out + \
-    torch.var(class_tend) / (torch.var(reuse_out)+torch.var(class_tend)) * class_tend
+    # class_tend = reverse_sigmoid(class_tend)
+    # class_tend = class_tend / common_temperature
+    # class_tend = nn.Sigmoid()(class_tend)
+    
+    w_r = (torch.var(reuse_out) / (torch.var(reuse_out)+torch.var(class_tend)) * reuse_out).view(-1) + \
+    (torch.var(class_tend) / (torch.var(reuse_out)+torch.var(class_tend)) * class_tend).view(-1)
     w_r = w_r.detach()
 
     return w_r
@@ -121,12 +121,12 @@ def get_source_reuse_weight(reuse_out, fc, w_avg, reuse_temperature=1.0, common_
     max , _= fc_softmax.topk(2, dim=1, largest=True)
     class_tend = max[:,0]-max[:,1]
     class_tend = class_tend / torch.mean(class_tend)
-    class_tend = reverse_sigmoid(class_tend)
-    class_tend = class_tend / common_temperature
-    class_tend = nn.Sigmoid()(class_tend)
+    # class_tend = reverse_sigmoid(class_tend)
+    # class_tend = class_tend / common_temperature
+    # class_tend = nn.Sigmoid()(class_tend)
 
-    w_r = torch.var(reuse_out) / (torch.var(reuse_out)+torch.var(class_tend)) * reuse_out + \
-    torch.var(class_tend) / (torch.var(reuse_out)+torch.var(class_tend)) * class_tend
+    w_r = (torch.var(reuse_out) / (torch.var(reuse_out)+torch.var(class_tend)) * reuse_out).view(-1) + \
+    (torch.var(class_tend) / (torch.var(reuse_out)+torch.var(class_tend)) * class_tend).view(-1)
     w_r = w_r.detach()
 
     return w_r

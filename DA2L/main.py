@@ -7,7 +7,7 @@ if is_in_notebook():
     from tqdm import tqdm_notebook as tqdm
 from torch import optim
 from torch.utils.tensorboard import SummaryWriter
-# from tensorboardX import SummarWriter
+# from tensorboardX import SummaryWriter
 import torch.backends.cudnn as cudnn
 
 cudnn.benchmark = True
@@ -161,6 +161,7 @@ epoch_id = 0
 total_epoch = min(len(source_train_dl), len(target_train_dl))
 stable_softmax = torch.zeros((total_epoch * args.data.dataloader.batch_size, len(source_classes))).to(output_device)
 source_share_weight_epoch = torch.zeros(total_epoch * args.data.dataloader.batch_size).to(output_device)
+label_source_epoch = torch.zeros(total_epoch * args.data.dataloader.batch_size).to(output_device)
 w_avg = torch.zeros(len(source_classes)).to(output_device)
 
 # =================== train
@@ -225,12 +226,17 @@ while global_step < args.train.min_step:
         # Pseudo Label Calibration
         source_share_weight_epoch[(global_step % total_epoch) * args.data.dataloader.batch_size : 
                            ((global_step + 1) % total_epoch) * args.data.dataloader.batch_size] \
-            = source_share_weight
-        w_avg = compute_avg_weight(source_share_weight_epoch, label_source, w_avg)
-
+            = source_share_weight.clone()
+        label_source_epoch[(global_step % total_epoch) * args.data.dataloader.batch_size : 
+                           ((global_step + 1) % total_epoch) * args.data.dataloader.batch_size] \
+            = label_source.clone()
+        
         if epoch_id == 1:
+            w_avg = compute_avg_weight(source_share_weight_epoch[0 : ((global_step + 1) % total_epoch) * args.data.dataloader.batch_size],
+         label_source_epoch[0 : ((global_step + 1) % total_epoch) * args.data.dataloader.batch_size], w_avg)
             _, w_avg = pseudo_label_calibration(predict_prob_target, w_avg)
         else:
+            w_avg = compute_avg_weight(source_share_weight_epoch, label_source_epoch, w_avg)
             predict_prob_target, w_avg = pseudo_label_calibration(predict_prob_target, w_avg)
 
         # Reuse Detect and Reuse Loss
@@ -247,8 +253,8 @@ while global_step < args.train.min_step:
             reuse_prob_discriminator_private_t = reuse_discriminator_t.forward(feature_target_private)
 
             target_reuse_weight = get_target_reuse_weight(reuse_prob_discriminator_private_t, fc_target_private)
-            tmp = target_reuse_weight * (1 - target_share_weight_private) * nn.BCELoss(reduction='none')\
-                (reuse_prob_discriminator_private_t, torch.zeros_like(reuse_prob_discriminator_private_t))
+            tmp = target_reuse_weight * (1 / (1 + target_share_weight_private)).view(-1) * nn.BCELoss(reduction='none')\
+                (reuse_prob_discriminator_private_t, torch.zeros_like(reuse_prob_discriminator_private_t)).view(-1)
             dt_loss += torch.mean(tmp, dim=0, keepdim=True)
 
         if feature_target_common == torch.Size([]):
@@ -276,7 +282,7 @@ while global_step < args.train.min_step:
             source_reuse_weight = get_source_reuse_weight(reuse_prob_discriminator_private_s, fc_source_private, w_avg, 
                                                       reuse_temperature=1.0, common_temperature = 1.0)
             tmp = source_reuse_weight * nn.BCELoss(reduction='none')(reuse_prob_discriminator_private_s, 
-                                                                 torch.zeros_like(reuse_prob_discriminator_private_s))
+                                                                 torch.zeros_like(reuse_prob_discriminator_private_s)).view(-1)
             ds_loss += torch.mean(tmp, dim=0, keepdim=True)
 
         # ============================= domain loss
