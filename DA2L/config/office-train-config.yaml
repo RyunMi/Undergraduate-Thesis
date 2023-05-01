@@ -11,7 +11,7 @@ data:
   dataloader:
     class_balance: true #
     data_workers: 3 # how many workers to use for train dataloaders
-    batch_size: 36 # batch_size for source domain and target domain respectively
+    batch_size: 32 # batch_size for source domain and target domain respectively
 
 model:
   base_model: resnext101 # choices=['resnet50', 'resnext101']
@@ -30,7 +30,7 @@ test:
   test_interval: 500 # interval of two continuous test phase
   test_only: False # test a given model and exit
   resume_file: '' # model to test
-  w_0: 0.55 # hyper-parameter w_0
+  w_0: 0.7 # hyper-parameter w_0
 
 misc:
   gpus: 1 # how many GPUs to be used, 0 indicates CPU only

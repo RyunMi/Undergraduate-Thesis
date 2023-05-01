@@ -77,6 +77,7 @@ if args.test.test_only:
     feature_extractor.load_state_dict(data['feature_extractor'])
     classifier.load_state_dict(data['classifier'])
     domain_discriminator.load_state_dict(data['domain_discriminator'])
+    # w_avg.load_state_dict(data['w_avg'])
 
     counters = [AccuracyCounter() for x in range(len(source_classes) + 1)]
     with TrainingModeManager([feature_extractor, classifier, domain_discriminator], train=False) as mgr, \
@@ -88,15 +89,19 @@ if args.test.test_only:
             label = label.to(output_device)
 
             feature = feature_extractor.forward(im)
-            feature, __, before_softmax, predict_prob = classifier.forward(feature)
             
+            feature, __, before_softmax, predict_prob = classifier.forward(feature)
+            predict_prob = TempScale(before_softmax, args.train.temp).softmax(1)
+
+            # predict_prob, _ = pseudo_label_calibration(predict_prob, w_avg)
+                    
             domain_prob = domain_discriminator.forward(__)
 
-            hat, max_value = perturb(im, before_softmax)
+            hat, max_value = perturb(im, feature_extractor, classifier)
 
-            hat_feature = feature_extractor.forward(hat)
+            hat_feature = feature_extractor.forward(hat.detach())
 
-            _, _, hat_before_softmax, _ = classifier.forward(hat_feature)
+            _, _, hat_before_softmax, _ = classifier.forward(hat_feature.detach())
 
             target_share_weight = get_target_share_weight(domain_prob, hat_before_softmax,  max_value,
                                                                   domain_temperature=1.0, class_temperature=1.0)
@@ -331,18 +336,19 @@ while global_step < args.train.min_step:
                     label = label.to(output_device)
 
                     feature = feature_extractor.forward(im)
-                    feature, __, before_softmax, predict_prob = classifier.forward(feature)
                     
-                    before_softmax, _ = pseudo_label_calibration(before_softmax, source_share_weight)
-                    predict_prob = before_softmax.softmax(-1)
+                    feature, __, before_softmax, predict_prob = classifier.forward(feature)
+                    predict_prob = TempScale(before_softmax, args.train.temp).softmax(1)
 
+                    # predict_prob, _ = pseudo_label_calibration(predict_prob, w_avg)
+                    
                     domain_prob = domain_discriminator.forward(__)
 
-                    hat, max_value = perturb(im, before_softmax)
+                    hat, max_value = perturb(im, feature_extractor, classifier)
 
-                    hat_feature = feature_extractor.forward(hat)
+                    hat_feature = feature_extractor.forward(hat.detach())
 
-                    _, _, hat_before_softmax, _ = classifier.forward(hat_feature)
+                    _, _, hat_before_softmax, _ = classifier.forward(hat_feature.detach())
 
                     target_share_weight = get_target_share_weight(domain_prob, hat_before_softmax,  max_value,
                                                                 domain_temperature=1.0, class_temperature=1.0)
@@ -382,6 +388,7 @@ while global_step < args.train.min_step:
                 "feature_extractor": feature_extractor.state_dict(),
                 'classifier': classifier.state_dict(),
                 'domain_discriminator': domain_discriminator.state_dict() if not isinstance(domain_discriminator, Nonsense) else 1.0,
+                # 'w_avg': w_avg.state_dict(),
             }
 
             if acc_test > best_acc:
