@@ -21,7 +21,8 @@ def perturb(inputs, feature_extractor, classifier):
     _, _, score, _ = classifier.forward(features)
     softmax_score = TempScale(score, args.train.temp).softmax(1)
     max_value, max_target = torch.max(softmax_score, dim=1)
-    xent = F.cross_entropy(softmax_score, max_target.long())
+    xent = F.cross_entropy(softmax_score, max_target.detach().long())
+    
     d = torch.autograd.grad(xent, inputs)[0]
     d = torch.ge(d, 0)
     d = (d.float() - 0.5) * 2
@@ -29,36 +30,39 @@ def perturb(inputs, feature_extractor, classifier):
     d[0][0] = (d[0][0] )/(0.229)
     d[0][1] = (d[0][1] )/(0.224)
     d[0][2] = (d[0][2] )/(0.225)
-    inputs_hat = torch.add(inputs.data, -args.train.eps, d)
+    inputs_hat = torch.add(inputs.data, -args.train.eps, d.detach())
+    
+    features_hat = feature_extractor.forward(inputs_hat)
+    _, _, output_hat, _ = classifier.forward(features_hat)
+    softmax_output_hat = TempScale(output_hat, args.train.temp).softmax(1)
+    max_value_hat = torch.max(softmax_output_hat, dim=1).values
+    pred_shift = torch.abs(max_value - max_value_hat).unsqueeze(1)
+    feature_extractor.train()
 
-    return inputs_hat.detach(), max_value.detach()
+    return pred_shift
 
 def reverse_sigmoid(y):
     return torch.log(y / (1.0 - y + 1e-10) + 1e-10)
 
-def get_source_share_weight(domain_out, hat, max_value, domain_temperature=1.0, class_temperature=1.0):
-    domain_logit = reverse_sigmoid(domain_out)
-    domain_logit = domain_logit / domain_temperature
-    domain_out = nn.Sigmoid()(domain_logit)
+def get_source_share_weight(domain_out, pred_shift, domain_temperature=1.0, class_temperature=1.0):
+    # domain_logit = reverse_sigmoid(domain_out)
+    # domain_logit = domain_logit / domain_temperature
+    # domain_out = nn.Sigmoid()(domain_logit)
     
-    hat = TempScale(hat, args.train.temp)
-    softmax_output_hat = hat.softmax(1)
-    max_value_hat = torch.max(softmax_output_hat, dim=1).values
-    pred_shift = torch.abs(max_value - max_value_hat).unsqueeze(1)
     min_val = pred_shift.min()
     max_val = pred_shift.max()
     pred_shift = (pred_shift - min_val) / (max_val - min_val)
-    pred_shift = reverse_sigmoid(pred_shift)
-    pred_shift = pred_shift / class_temperature
-    pred_shift = nn.Sigmoid()(pred_shift)
+    # pred_shift = reverse_sigmoid(pred_shift)
+    # pred_shift = pred_shift / class_temperature
+    # pred_shift = nn.Sigmoid()(pred_shift)
 
     weight = domain_out - pred_shift
     weight = weight.detach()
 
     return weight
 
-def get_target_share_weight(domain_out, hat, max_value, domain_temperature=1.0, class_temperature=1.0):
-    return - get_source_share_weight(domain_out, hat, max_value, domain_temperature, class_temperature)
+def get_target_share_weight(domain_out, pred_shift, domain_temperature=1.0, class_temperature=1.0):
+    return - get_source_share_weight(domain_out, pred_shift, domain_temperature, class_temperature)
 
 def normalize_weight(x):
     min_val = x.min()
@@ -106,10 +110,12 @@ def compute_avg_weight(weight, label, class_weight):
     for i in range(len(class_weight)):
         mask = (label == i)
         class_weight[i] = weight[mask].mean()
+    class_weight = torch.where(torch.isnan(class_weight), torch.full_like(class_weight, 0), class_weight)
     return class_weight
 
+
 def pseudo_label_calibration(pslab, weight):
-    weight = weight.transpose(1, 0).expand(pslab.shape[0], -1)
+    #weight = weight.transpose(1, 0).expand(pslab.shape[0], -1)
     weight = normalize_weight(weight)
     pslab = torch.exp(pslab)
     pslab = pslab * weight
@@ -126,9 +132,17 @@ def get_source_reuse_weight(reuse_out, fc, w_avg, reuse_temperature=1.0, common_
     fc = F.normalize(fc, p=1, dim=1)
     fc = TempScale(fc, args.train.temp)
     fc_softmax = fc.softmax(1)
-    max , _= fc_softmax.topk(2, dim=1, largest=True)
-    class_tend = max[:,0]-max[:,1]
-    class_tend = class_tend / torch.mean(class_tend)
+
+    if min(fc_softmax.shape) == 0:
+        class_tend = torch.zeros((fc_softmax.shape[0]),1)
+    
+    if fc_softmax.shape[1] == 1:
+        class_tend = fc_softmax
+    else:
+        max , _= fc_softmax.topk(2, dim=1, largest=True)
+        class_tend = max[:,0]-max[:,1]
+        class_tend = class_tend / torch.mean(class_tend)
+    
     # class_tend = reverse_sigmoid(class_tend)
     # class_tend = class_tend / common_temperature
     # class_tend = nn.Sigmoid()(class_tend)
