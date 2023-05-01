@@ -165,7 +165,7 @@ total_steps = tqdm(range(args.train.min_step),desc='global step')
 epoch_id = 0
 total_epoch = min(len(source_train_dl), len(target_train_dl))
 stable_softmax = torch.zeros((total_epoch * args.data.dataloader.batch_size, len(source_classes))).to(output_device)
-source_share_weight_epoch = torch.zeros(total_epoch * args.data.dataloader.batch_size).to(output_device)
+source_share_weight_epoch = torch.zeros(total_epoch * args.data.dataloader.batch_size, 1).to(output_device)
 label_source_epoch = torch.zeros(total_epoch * args.data.dataloader.batch_size).to(output_device)
 w_avg = torch.zeros(len(source_classes)).to(output_device)
 
