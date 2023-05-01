@@ -1,6 +1,9 @@
 import yaml
 import easydict
+import os
 from os.path import join
+
+local_rank = int(os.environ["LOCAL_RANK"])
 
 class Dataset:
     def __init__(self, path, domains, files, prefix):
@@ -14,9 +17,7 @@ import argparse
 
 parser = argparse.ArgumentParser(description='Code for *Domain Adaptation Based on Adversarial Learning*',
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-
 parser.add_argument('--config', type=str, default='config.yaml', help='/path/to/config/file')
-parser.add_argument("--local_rank", type=int, default=-1)
 
 args = parser.parse_args()
 config_file = args.config

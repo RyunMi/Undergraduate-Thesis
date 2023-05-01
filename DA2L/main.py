@@ -24,9 +24,8 @@ seed_everything()
 #     gpu_ids = select_GPUs(args.misc.gpus)
 #     output_device = gpu_ids[0]
 
-torch.cuda.set_device(args.local_rank)
-output_device = torch.device('cuda', args.local_rank)
-torch.distributed.init_process_group(backend='nccl')
+device = torch.device('cuda', local_rank)
+torch.distributed.init_process_group(backend='nccl') # Only for Linux
 
 now = datetime.datetime.now().strftime('%b%d_%H-%M-%S')
 
@@ -62,18 +61,18 @@ class TotalNet(nn.Module):
 
 
 totalNet = TotalNet()
-totalNet.to(output_device)
+totalNet.cuda()
 
-feature_extractor = nn.parallel.DistributedDataParallel(totalNet.feature_extractor, device_ids=[args.local_rank], 
-                    output_device=args.local_rank, find_unused_parameters=True).train(True)
-classifier = nn.parallel.DistributedDataParallel(totalNet.classifier, device_ids=[args.local_rank], 
-                    output_device=args.local_rank, find_unused_parameters=True).train(True)
-domain_discriminator = nn.parallel.DistributedDataParallel(totalNet.domain_discriminator, device_ids=[args.local_rank], 
-                    output_device=args.local_rank, find_unused_parameters=True).train(True)
-reuse_discriminator_s = nn.parallel.DistributedDataParallel(totalNet.reuse_discriminator_s, device_ids=[args.local_rank], 
-                    output_device=args.local_rank, find_unused_parameters=True).train(True)
-reuse_discriminator_t = nn.parallel.DistributedDataParallel(totalNet.reuse_discriminator_t, device_ids=[args.local_rank], 
-                    output_device=args.local_rank, find_unused_parameters=True).train(True)
+feature_extractor = nn.parallel.DistributedDataParallel(totalNet.feature_extractor, device_ids=[local_rank], 
+                    output_device=local_rank, find_unused_parameters=True).train(True)
+classifier = nn.parallel.DistributedDataParallel(totalNet.classifier, device_ids=[local_rank], 
+                    output_device=local_rank, find_unused_parameters=True).train(True)
+domain_discriminator = nn.parallel.DistributedDataParallel(totalNet.domain_discriminator, device_ids=[local_rank], 
+                    output_device=local_rank, find_unused_parameters=True).train(True)
+reuse_discriminator_s = nn.parallel.DistributedDataParallel(totalNet.reuse_discriminator_s, device_ids=[local_rank], 
+                    output_device=local_rank, find_unused_parameters=True).train(True)
+reuse_discriminator_t = nn.parallel.DistributedDataParallel(totalNet.reuse_discriminator_t, device_ids=[local_rank], 
+                    output_device=local_rank, find_unused_parameters=True).train(True)
 # feature_extractor = nn.DataParallel(totalNet.feature_extractor, device_ids=gpu_ids, output_device=output_device).train(True)
 # classifier = nn.DataParallel(totalNet.classifier, device_ids=gpu_ids, output_device=output_device).train(True)
 # domain_discriminator = nn.DataParallel(totalNet.domain_discriminator, device_ids=gpu_ids, output_device=output_device).train(True)
@@ -95,8 +94,8 @@ if args.test.test_only:
                          'target_share_weight']) as target_accumulator:#, \
                 #torch.no_grad():
         for i, (im, label) in enumerate(tqdm(target_test_dl, desc='testing ')):
-            im = im.to(output_device)
-            label = label.to(output_device)
+            im = im.to(device)
+            label = label.to(device)
 
             feature = feature_extractor.forward(im)
             
@@ -170,10 +169,10 @@ best_acc = 0
 total_steps = tqdm(range(args.train.min_step),desc='global step')
 epoch_id = 0
 total_epoch = min(len(source_train_dl), len(target_train_dl))
-stable_softmax = torch.zeros((total_epoch * args.data.dataloader.batch_size, len(source_classes))).to(output_device)
-source_share_weight_epoch = torch.zeros(total_epoch * args.data.dataloader.batch_size, 1).to(output_device)
-label_source_epoch = torch.zeros(total_epoch * args.data.dataloader.batch_size).to(output_device)
-w_avg = torch.zeros(len(source_classes)).to(output_device)
+stable_softmax = torch.zeros((total_epoch * args.data.dataloader.batch_size, len(source_classes))).to(device)
+source_share_weight_epoch = torch.zeros(total_epoch * args.data.dataloader.batch_size, 1).to(device)
+label_source_epoch = torch.zeros(total_epoch * args.data.dataloader.batch_size).to(device)
+w_avg = torch.zeros(len(source_classes)).to(device)
 
 # =================== train
 while global_step < args.train.min_step:
@@ -185,13 +184,13 @@ while global_step < args.train.min_step:
 
         save_label_target = label_target  # for debug usage
 
-        label_source = label_source.to(output_device)
-        label_target = label_target.to(output_device)
+        label_source = label_source.to(device)
+        label_target = label_target.to(device)
         label_target = torch.zeros_like(label_target)
 
         # ========================= forward pass
-        im_source = im_source.to(output_device)
-        im_target = im_target.to(output_device)
+        im_source = im_source.to(device)
+        im_target = im_target.to(device)
 
         fc1_s = feature_extractor.forward(im_source)
         fc1_t = feature_extractor.forward(im_target)
@@ -247,8 +246,8 @@ while global_step < args.train.min_step:
         # Reuse Detect and Reuse Loss
         feature_target_private, feature_target_common = common_private_spilt(target_share_weight, feature_target)
         
-        dt_loss = torch.zeros(1, 1).to(output_device)
-        ds_loss = torch.zeros(1, 1).to(output_device)
+        dt_loss = torch.zeros(1, 1).to(device)
+        ds_loss = torch.zeros(1, 1).to(device)
         
         if min(feature_target_private.shape) == 0:
             pass
@@ -291,7 +290,7 @@ while global_step < args.train.min_step:
             ds_loss += torch.mean(tmp, dim=0, keepdim=True)
 
         # ============================= domain loss
-        dom_loss = torch.zeros(1, 1).to(output_device)
+        dom_loss = torch.zeros(1, 1).to(device)
 
         tmp = source_share_weight * nn.BCELoss(reduction='none')(domain_prob_discriminator_source, 
                                                                 torch.zeros_like(domain_prob_discriminator_source))
@@ -316,7 +315,7 @@ while global_step < args.train.min_step:
         if global_step % args.log.log_interval == 0:
             counter = AccuracyCounter()
             counter.addOneBatch(variable_to_numpy(one_hot(label_source, len(source_classes))), variable_to_numpy(predict_prob_source))
-            acc_train = torch.tensor([counter.reportAccuracy()]).to(output_device)
+            acc_train = torch.tensor([counter.reportAccuracy()]).to(device)
             logger.add_scalar('dom_loss', dom_loss, global_step)
             logger.add_scalar('ce', ce, global_step)
             logger.add_scalar('acc_train', acc_train, global_step)
@@ -332,8 +331,8 @@ while global_step < args.train.min_step:
                 #torch.no_grad():
 
                 for i, (im, label) in enumerate(tqdm(target_test_dl, desc='testing ')):
-                    im = im.to(output_device)
-                    label = label.to(output_device)
+                    im = im.to(device)
+                    label = label.to(device)
 
                     feature = feature_extractor.forward(im)
                     

@@ -29,7 +29,7 @@ train:
 test:
   test_interval: 500 # interval of two continuous test phase
   test_only: True # test a given model and exit
-  resume_file: officehome.pkl # model to test
+  resume_file: best.pkl # model to test
   w_0: 0.25 # hyper-parameter w_0
 
 misc:
