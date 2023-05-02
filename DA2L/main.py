@@ -15,17 +15,17 @@ cudnn.deterministic = True
 
 seed_everything()
 
-# if args.misc.gpus < 1:
-#     import os
-#     os.environ["CUDA_VISIBLE_DEVICES"] = ""
-#     gpu_ids = []
-#     output_device = torch.device('cpu')
-# else:
-#     gpu_ids = select_GPUs(args.misc.gpus)
-#     output_device = gpu_ids[0]
+if args.misc.gpus < 1:
+    import os
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    gpu_ids = []
+    device = torch.device('cpu')
+else:
+    gpu_ids = select_GPUs(args.misc.gpus)
+    device = gpu_ids[0]
 
-device = torch.device('cuda', local_rank)
-torch.distributed.init_process_group(backend='nccl') # Only for Linux
+# device = torch.device('cuda', local_rank)
+# torch.distributed.init_process_group(backend='nccl') # Only for Linux
 
 now = datetime.datetime.now().strftime('%b%d_%H-%M-%S')
 
@@ -61,23 +61,23 @@ class TotalNet(nn.Module):
 
 
 totalNet = TotalNet()
-totalNet.cuda()
+totalNet.to(device)
 
-feature_extractor = nn.parallel.DistributedDataParallel(totalNet.feature_extractor, device_ids=[local_rank], 
-                    output_device=local_rank, find_unused_parameters=True).train(True)
-classifier = nn.parallel.DistributedDataParallel(totalNet.classifier, device_ids=[local_rank], 
-                    output_device=local_rank, find_unused_parameters=True).train(True)
-domain_discriminator = nn.parallel.DistributedDataParallel(totalNet.domain_discriminator, device_ids=[local_rank], 
-                    output_device=local_rank, find_unused_parameters=True).train(True)
-reuse_discriminator_s = nn.parallel.DistributedDataParallel(totalNet.reuse_discriminator_s, device_ids=[local_rank], 
-                    output_device=local_rank, find_unused_parameters=True).train(True)
-reuse_discriminator_t = nn.parallel.DistributedDataParallel(totalNet.reuse_discriminator_t, device_ids=[local_rank], 
-                    output_device=local_rank, find_unused_parameters=True).train(True)
-# feature_extractor = nn.DataParallel(totalNet.feature_extractor, device_ids=gpu_ids, output_device=output_device).train(True)
-# classifier = nn.DataParallel(totalNet.classifier, device_ids=gpu_ids, output_device=output_device).train(True)
-# domain_discriminator = nn.DataParallel(totalNet.domain_discriminator, device_ids=gpu_ids, output_device=output_device).train(True)
-# reuse_discriminator_s = nn.DataParallel(totalNet.reuse_discriminator_s, device_ids=gpu_ids, output_device=output_device).train(True)
-# reuse_discriminator_t = nn.DataParallel(totalNet.reuse_discriminator_t, device_ids=gpu_ids, output_device=output_device).train(True)
+# feature_extractor = nn.parallel.DistributedDataParallel(totalNet.feature_extractor, device_ids=[local_rank], 
+#                     output_device=local_rank, find_unused_parameters=True).train(True)
+# classifier = nn.parallel.DistributedDataParallel(totalNet.classifier, device_ids=[local_rank], 
+#                     output_device=local_rank, find_unused_parameters=True).train(True)
+# domain_discriminator = nn.parallel.DistributedDataParallel(totalNet.domain_discriminator, device_ids=[local_rank], 
+#                     output_device=local_rank, find_unused_parameters=True).train(True)
+# reuse_discriminator_s = nn.parallel.DistributedDataParallel(totalNet.reuse_discriminator_s, device_ids=[local_rank], 
+#                     output_device=local_rank, find_unused_parameters=True).train(True)
+# reuse_discriminator_t = nn.parallel.DistributedDataParallel(totalNet.reuse_discriminator_t, device_ids=[local_rank], 
+#                     output_device=local_rank, find_unused_parameters=True).train(True)
+feature_extractor = nn.DataParallel(totalNet.feature_extractor, device_ids=gpu_ids, output_device=device).train(True)
+classifier = nn.DataParallel(totalNet.classifier, device_ids=gpu_ids, output_device=device).train(True)
+domain_discriminator = nn.DataParallel(totalNet.domain_discriminator, device_ids=gpu_ids, output_device=device).train(True)
+reuse_discriminator_s = nn.DataParallel(totalNet.reuse_discriminator_s, device_ids=gpu_ids, output_device=device).train(True)
+reuse_discriminator_t = nn.DataParallel(totalNet.reuse_discriminator_t, device_ids=gpu_ids, output_device=device).train(True)
 
 # =================== evaluation
 if args.test.test_only:
@@ -385,6 +385,8 @@ while global_step < args.train.min_step:
                 'domain_discriminator': domain_discriminator.state_dict() if not isinstance(domain_discriminator, Nonsense) else 1.0,
                 # 'w_avg': w_avg.state_dict(),
             }
+
+            print(f'test accuracy is {acc_test.item()}')
 
             if acc_test > best_acc:
                 best_acc = acc_test
