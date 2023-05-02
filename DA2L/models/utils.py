@@ -30,12 +30,12 @@ def perturb(inputs, feature_extractor, classifier):
     d[0][0] = (d[0][0] )/(0.229)
     d[0][1] = (d[0][1] )/(0.224)
     d[0][2] = (d[0][2] )/(0.225)
-    inputs_hat = torch.add(inputs.data, -args.train.eps, d.detach())
+    inputs.data.add_(-args.train.eps, d.detach())
     
-    features_hat = feature_extractor.forward(inputs_hat)
-    _, _, output_hat, _ = classifier.forward(features_hat)
-    softmax_output_hat = TempScale(output_hat, args.train.temp).softmax(1)
-    max_value_hat = torch.max(softmax_output_hat, dim=1).values
+    features = feature_extractor.forward(inputs)
+    _, _, output, _ = classifier.forward(features)
+    softmax_output = TempScale(output, args.train.temp).softmax(1)
+    max_value_hat = torch.max(softmax_output, dim=1).values
     pred_shift = torch.abs(max_value - max_value_hat).unsqueeze(1)
     feature_extractor.train()
 
@@ -49,9 +49,7 @@ def get_source_share_weight(domain_out, pred_shift, domain_temperature=1.0, clas
     # domain_logit = domain_logit / domain_temperature
     # domain_out = nn.Sigmoid()(domain_logit)
     
-    min_val = pred_shift.min()
-    max_val = pred_shift.max()
-    pred_shift = (pred_shift - min_val) / (max_val - min_val)
+    pred_shift = (pred_shift - pred_shift.min()) / (pred_shift.max() - pred_shift.min())
     # pred_shift = reverse_sigmoid(pred_shift)
     # pred_shift = pred_shift / class_temperature
     # pred_shift = nn.Sigmoid()(pred_shift)
@@ -65,9 +63,7 @@ def get_target_share_weight(domain_out, pred_shift, domain_temperature=1.0, clas
     return - get_source_share_weight(domain_out, pred_shift, domain_temperature, class_temperature)
 
 def normalize_weight(x):
-    min_val = x.min()
-    max_val = x.max()
-    x = (x - min_val) / (max_val - min_val)
+    x = (x - x.min()) / (x.max() - x.min())
     x = x / torch.mean(x)
     return x.detach()
 
@@ -85,7 +81,7 @@ def get_target_reuse_weight(reuse_out, fc, reuse_temperature=1.0, common_tempera
     reuse_logit = reuse_logit / reuse_temperature
     reuse_out = nn.Sigmoid()(reuse_logit)
     
-    max , _= fc.topk(2, dim=1, largest=True)
+    max, _ = fc.topk(2, dim=1, largest=True)
     class_tend = max[:,0]-max[:,1]
     class_tend = class_tend / torch.mean(class_tend)
     # class_tend = reverse_sigmoid(class_tend)

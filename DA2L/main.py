@@ -27,9 +27,9 @@ else:
 # device = torch.device('cuda', local_rank)
 # torch.distributed.init_process_group(backend='nccl') # Only for Linux
 
-now = datetime.datetime.now().strftime('%b%d_%H-%M-%S')
+now = datetime.datetime.now().strftime('%b%d-%H_%M_%S')
 
-log_dir = f'{args.log.root_dir}/{now}'
+log_dir = f'{args.log.root_dir}{now}'
 
 logger = SummaryWriter(log_dir)
 
@@ -169,7 +169,6 @@ best_acc = 0
 total_steps = tqdm(range(args.train.min_step),desc='global step')
 epoch_id = 0
 total_epoch = min(len(source_train_dl), len(target_train_dl))
-stable_softmax = torch.zeros((total_epoch * args.data.dataloader.batch_size, len(source_classes))).to(device)
 source_share_weight_epoch = torch.zeros(total_epoch * args.data.dataloader.batch_size, 1).to(device)
 label_source_epoch = torch.zeros(total_epoch * args.data.dataloader.batch_size).to(device)
 w_avg = torch.zeros(len(source_classes)).to(device)
@@ -199,18 +198,7 @@ while global_step < args.train.min_step:
         fc1_t, feature_target, fc2_t, predict_prob_target = classifier.forward(fc1_t)
         predict_prob_source = TempScale(fc2_s, args.train.temp).softmax(1)
         predict_prob_target = TempScale(fc2_t, args.train.temp).softmax(1)
-
-        # Temporal Ensembling
-        if epoch_id != 1:
-            predict_prob_target = predict_prob_target * (1 - args.train.alpha)
-            predict_prob_target = predict_prob_target.add(stable_softmax[(global_step % total_epoch) 
-                * args.data.dataloader.batch_size : (global_step % total_epoch + 1) * args.data.dataloader.batch_size],
-                alpha = args.train.alpha)
-            
-        stable_softmax[(global_step % total_epoch) * args.data.dataloader.batch_size : 
-                        (global_step % total_epoch + 1) * args.data.dataloader.batch_size] \
-            = predict_prob_target.clone()
-
+         
         # Output of Domain Discriminator
         domain_prob_discriminator_source = domain_discriminator.forward(feature_source)
         domain_prob_discriminator_target = domain_discriminator.forward(feature_target)
@@ -303,10 +291,15 @@ while global_step < args.train.min_step:
         ce = nn.CrossEntropyLoss(reduction='none')(predict_prob_source, label_source)
         ce = torch.mean(ce, dim=0, keepdim=True)
 
+        loss = torch.zeros(1, 1).to(device)
+
         with OptimizerManager(
                 [optimizer_finetune, optimizer_cls, optimizer_domain_discriminator,
                 optimizer_reuse_discriminator_t, optimizer_reuse_discriminator_s]):
-            loss = ce + dom_loss + dt_loss + ds_loss
+            loss += ce
+            loss += dom_loss
+            loss += dt_loss
+            loss += ds_loss
             loss.backward()
 
         global_step += 1
@@ -323,14 +316,16 @@ while global_step < args.train.min_step:
             logger.add_scalar('ds_loss', ds_loss, global_step)
 
         # =================== validation
-        if global_step % args.test.test_interval == 0:
+        if global_step % (args.test.test_interval) == 0:
 
             counters = [AccuracyCounter() for x in range(len(source_classes) + 1)]
             with TrainingModeManager([feature_extractor, classifier, domain_discriminator], train=False) as mgr, \
-                Accumulator(['feature', 'predict_prob', 'label', 'domain_prob', 'before_softmax', 'target_share_weight']) as target_accumulator:#, \
+              Accumulator(['feature', 'predict_prob', 'label', 'domain_prob', 'before_softmax', 'target_share_weight']) as target_accumulator:#, \
                 #torch.no_grad():
-
+                
                 for i, (im, label) in enumerate(tqdm(target_test_dl, desc='testing ')):
+                    torch.cuda.empty_cache()
+
                     im = im.to(device)
                     label = label.to(device)
 
@@ -386,8 +381,6 @@ while global_step < args.train.min_step:
                 # 'w_avg': w_avg.state_dict(),
             }
 
-            print(f'test accuracy is {acc_test.item()}')
-
             if acc_test > best_acc:
                 best_acc = acc_test
                 with open(join(log_dir, 'best.pkl'), 'wb') as f:
@@ -395,3 +388,5 @@ while global_step < args.train.min_step:
 
             with open(join(log_dir, 'current.pkl'), 'wb') as f:
                 torch.save(data, f)
+
+            torch.cuda.empty_cache()
