@@ -173,23 +173,3 @@ class AdversarialNetwork(nn.Module):
         x_ = self.grl(x)
         y = self.main(x_)
         return y
-    
-class NonAdversarialNetwork(nn.Module):
-
-    def __init__(self, in_feature):
-        super(AdversarialNetwork, self).__init__()
-        self.main = nn.Sequential(
-            nn.Linear(in_feature, 1024),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(1024,1024),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(1024, 1),
-            nn.Sigmoid()
-        )
-        # coeff = 0.0 + (2.0 / (1 + np.exp(- gamma * step * 1.0 / max_iter)) - 1.0) * (1.0 - 0.0)
-
-    def forward(self, x):
-        x = self.main(x)
-        return x
