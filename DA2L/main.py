@@ -48,6 +48,7 @@ class TotalNet(nn.Module):
         classifier_output_dim = len(source_classes)
         self.classifier = CLS(self.feature_extractor.output_num(), classifier_output_dim, bottle_neck_dim=256)
         self.domain_discriminator = AdversarialNetwork(256)
+        self.domain_discriminator_separate = NonAdversarialNetwork(256)
         self.reuse_discriminator_s = AdversarialNetwork(256)
         self.reuse_discriminator_t = AdversarialNetwork(256)
 
@@ -55,9 +56,10 @@ class TotalNet(nn.Module):
         f = self.feature_extractor(x)
         f, _, __, y = self.classifier(f)
         d = self.domain_discriminator(_)
+        d_0 = self.domain_discriminator_separate(_)
         hat_d_s = self.reuse_discriminator_s(_)
         hat_d_t = self.reuse_discriminator_t(_)
-        return y, d, hat_d_s, hat_d_t
+        return y, d, d_0, hat_d_s, hat_d_t
 
 
 totalNet = TotalNet()
@@ -76,6 +78,8 @@ totalNet.to(device)
 feature_extractor = nn.DataParallel(totalNet.feature_extractor, device_ids=gpu_ids, output_device=device).train(True)
 classifier = nn.DataParallel(totalNet.classifier, device_ids=gpu_ids, output_device=device).train(True)
 domain_discriminator = nn.DataParallel(totalNet.domain_discriminator, device_ids=gpu_ids, output_device=device).train(True)
+domain_discriminator_separate = nn.DataParallel(totalNet.domain_discriminator_separate, device_ids=gpu_ids, 
+                                                output_device=device).train(True)
 reuse_discriminator_s = nn.DataParallel(totalNet.reuse_discriminator_s, device_ids=gpu_ids, output_device=device).train(True)
 reuse_discriminator_t = nn.DataParallel(totalNet.reuse_discriminator_t, device_ids=gpu_ids, output_device=device).train(True)
 
@@ -86,10 +90,11 @@ if args.test.test_only:
     feature_extractor.load_state_dict(data['feature_extractor'])
     classifier.load_state_dict(data['classifier'])
     domain_discriminator.load_state_dict(data['domain_discriminator'])
+    domain_discriminator_separate.load_state_dict(data['domain_discriminator_separate'])
     # w_avg.load_state_dict(data['w_avg'])
 
     counters = [AccuracyCounter() for x in range(len(source_classes) + 1)]
-    with TrainingModeManager([feature_extractor, classifier, domain_discriminator], train=False) as mgr, \
+    with TrainingModeManager([feature_extractor, classifier, domain_discriminator_separate], train=False) as mgr, \
             Accumulator(['feature', 'predict_prob', 'label', 'domain_prob', 'before_softmax',
                          'target_share_weight']) as target_accumulator:#, \
                 #torch.no_grad():
@@ -104,7 +109,7 @@ if args.test.test_only:
 
             # predict_prob, _ = pseudo_label_calibration(predict_prob, w_avg)
                     
-            domain_prob = domain_discriminator.forward(__)
+            domain_prob = domain_discriminator_separate.forward(__)
 
             pred_shift = perturb(im, feature_extractor, classifier)
 
@@ -154,6 +159,9 @@ optimizer_domain_discriminator = OptimWithSheduler(
     optim.SGD(domain_discriminator.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay,
                momentum=args.train.momentum, nesterov=True),
     scheduler)
+optimizer_domain_discriminator_separate = OptimWithSheduler(
+    optim.SGD(domain_discriminator_separate.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay, 
+    momentum=args.train.momentum, nesterov=True),scheduler)
 optimizer_reuse_discriminator_s = OptimWithSheduler(
     optim.SGD(reuse_discriminator_s.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay, 
               momentum=args.train.momentum, nesterov=True),
@@ -203,15 +211,18 @@ while global_step < args.train.min_step:
         domain_prob_discriminator_source = domain_discriminator.forward(feature_source)
         domain_prob_discriminator_target = domain_discriminator.forward(feature_target)
 
+        domain_prob_discriminator_source_separate = domain_discriminator_separate.forward(feature_source.detach())
+        domain_prob_discriminator_target_separate = domain_discriminator_separate.forward(feature_target.detach())
+
         # Adversarial perturbation
         pred_shift_source = perturb(im_source, feature_extractor, classifier)
         pred_shift_target = perturb(im_target, feature_extractor, classifier)
 
         # w_s and w_t
-        source_share_weight = get_source_share_weight(domain_prob_discriminator_source, pred_shift_source,
+        source_share_weight = get_source_share_weight(domain_prob_discriminator_source_separate, pred_shift_source,
                                                     domain_temperature=1.0, class_temperature=1.0)
         source_share_weight = normalize_weight(source_share_weight)
-        target_share_weight = get_target_share_weight(domain_prob_discriminator_target, pred_shift_target,
+        target_share_weight = get_target_share_weight(domain_prob_discriminator_target_separate, pred_shift_target,
                                                     domain_temperature=1.0, class_temperature=1.0)
         target_share_weight = normalize_weight(target_share_weight)
         
@@ -287,6 +298,11 @@ while global_step < args.train.min_step:
                                                                 torch.ones_like(domain_prob_discriminator_target))
         dom_loss += torch.mean(tmp, dim=0, keepdim=True)
 
+        dom_loss_separate = torch.zeros(1, 1).to(device)
+
+        dom_loss_separate += nn.BCELoss()(domain_prob_discriminator_source_separate, torch.zeros_like(domain_prob_discriminator_source_separate))
+        dom_loss_separate += nn.BCELoss()(domain_prob_discriminator_target_separate, torch.ones_like(domain_prob_discriminator_target_separate))
+
         # ============================== cross entropy loss
         ce = nn.CrossEntropyLoss(reduction='none')(predict_prob_source, label_source)
         ce = torch.mean(ce, dim=0, keepdim=True)
@@ -294,10 +310,11 @@ while global_step < args.train.min_step:
         loss = torch.zeros(1, 1).to(device)
 
         with OptimizerManager(
-                [optimizer_finetune, optimizer_cls, optimizer_domain_discriminator,
+                [optimizer_finetune, optimizer_cls, optimizer_domain_discriminator, optimizer_domain_discriminator_separate,
                 optimizer_reuse_discriminator_t, optimizer_reuse_discriminator_s]):
             loss += ce
             loss += dom_loss
+            loss += dom_loss_separate
             loss += dt_loss
             loss += ds_loss
             loss.backward()
@@ -319,13 +336,12 @@ while global_step < args.train.min_step:
         if global_step % (args.test.test_interval) == 0:
 
             counters = [AccuracyCounter() for x in range(len(source_classes) + 1)]
-            with TrainingModeManager([feature_extractor, classifier, domain_discriminator], train=False) as mgr, \
-              Accumulator(['feature', 'predict_prob', 'label', 'domain_prob', 'before_softmax', 'target_share_weight']) as target_accumulator:#, \
+            with TrainingModeManager([feature_extractor, classifier, domain_discriminator_separate], train=False) as mgr, \
+            Accumulator(['feature', 'predict_prob', 'label', 'domain_prob', 'before_softmax','target_share_weight']) as target_accumulator:#, \
                 #torch.no_grad():
-                
+
                 for i, (im, label) in enumerate(tqdm(target_test_dl, desc='testing ')):
                     torch.cuda.empty_cache()
-
                     im = im.to(device)
                     label = label.to(device)
 
@@ -336,8 +352,8 @@ while global_step < args.train.min_step:
 
                     # predict_prob, _ = pseudo_label_calibration(predict_prob, w_avg)
                     
-                    domain_prob = domain_discriminator.forward(__)
-
+                    domain_prob = domain_discriminator_separate.forward(__)
+                    
                     pred_shift = perturb(im, feature_extractor, classifier)
 
                     target_share_weight = get_target_share_weight(domain_prob, pred_shift,
@@ -373,11 +389,13 @@ while global_step < args.train.min_step:
 
             logger.add_scalar('acc_test', acc_test, global_step)
             clear_output()
+            print(f'test accuracy is {acc_test.item()}')
 
             data = {
                 "feature_extractor": feature_extractor.state_dict(),
                 'classifier': classifier.state_dict(),
                 'domain_discriminator': domain_discriminator.state_dict() if not isinstance(domain_discriminator, Nonsense) else 1.0,
+                'domain_discriminator_separate': domain_discriminator_separate.state_dict(),
                 # 'w_avg': w_avg.state_dict(),
             }
 
