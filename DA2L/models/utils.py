@@ -14,53 +14,58 @@ def seed_everything(seed=1234):
 def TempScale(p, t):
     return p / t
 
-def perturb(inputs, feature_extractor, classifier):
-    feature_extractor.eval()
-    inputs.requires_grad = True
-    features = feature_extractor.forward(inputs)
-    _, _, score, _ = classifier.forward(features)
-    softmax_score = TempScale(score, args.train.temp).softmax(1)
-    max_value, max_target = torch.max(softmax_score, dim=1)
-    xent = F.cross_entropy(softmax_score, max_target.detach().long())
-    
-    d = torch.autograd.grad(xent, inputs)[0]
-    d = torch.ge(d, 0)
-    d = (d.float() - 0.5) * 2
-    # Normalizing the gradient to the same space of image
-    d[0][0] = (d[0][0] )/(0.229)
-    d[0][1] = (d[0][1] )/(0.224)
-    d[0][2] = (d[0][2] )/(0.225)
-    inputs.data.add_(-args.train.eps, d.detach())
-    
-    features = feature_extractor.forward(inputs)
-    _, _, output, _ = classifier.forward(features)
-    softmax_output = TempScale(output, args.train.temp).softmax(1)
-    max_value_hat = torch.max(softmax_output, dim=1).values
-    pred_shift = torch.abs(max_value - max_value_hat).unsqueeze(1)
-    feature_extractor.train()
+def perturb(inputs, feature_extractor, classifier, class_temperature=10.0):
+    with TrainingModeManager([feature_extractor, classifier], train=False):
+        inputs.requires_grad = True
+        features = feature_extractor.forward(inputs)
+        _, _, score, _ = classifier.forward(features)
+        score = score / class_temperature
+        softmax_score = nn.Softmax(-1)(score)
+        max_value, max_target = torch.max(softmax_score, dim=1)
+        xent = F.cross_entropy(softmax_score, max_target.detach().long())
+        
+        d = torch.autograd.grad(xent, inputs)[0]
+        d = torch.ge(d, 0)
+        d = (d.float() - 0.5) * 2
+        # Normalizing the gradient to the same space of image
+        d[0][0] = (d[0][0] )/(0.229)
+        d[0][1] = (d[0][1] )/(0.224)
+        d[0][2] = (d[0][2] )/(0.225)
+        inputs.data.add_(-args.train.eps, d.detach())
+        
+        features = feature_extractor.forward(inputs)
+        _, _, output, _ = classifier.forward(features)
+        softmax_output = TempScale(output, args.train.temp).softmax(1)
+        max_value_hat = torch.max(softmax_output, dim=1).values
+        pred_shift = torch.abs(max_value - max_value_hat).unsqueeze(1)
 
     return pred_shift
 
 def reverse_sigmoid(y):
     return torch.log(y / (1.0 - y + 1e-10) + 1e-10)
 
-def get_source_share_weight(domain_out, pred_shift, domain_temperature=1.0, class_temperature=1.0):
-    # domain_logit = reverse_sigmoid(domain_out)
-    # domain_logit = domain_logit / domain_temperature
-    # domain_out = nn.Sigmoid()(domain_logit)
+def get_source_share_weight(domain_out, pred_shift, domain_temperature=1.0):
+    domain_logit = reverse_sigmoid(domain_out)
+    domain_logit = domain_logit / domain_temperature
+    domain_out = nn.Sigmoid()(domain_logit)
     
     pred_shift = (pred_shift - pred_shift.min()) / (pred_shift.max() - pred_shift.min())
-    # pred_shift = reverse_sigmoid(pred_shift)
-    # pred_shift = pred_shift / class_temperature
-    # pred_shift = nn.Sigmoid()(pred_shift)
+    pred_shift = reverse_sigmoid(pred_shift)
+    pred_shift = pred_shift / domain_temperature
+    pred_shift = nn.Sigmoid()(pred_shift)
 
     weight = domain_out - pred_shift
     weight = weight.detach()
 
+    # entropy = torch.sum(- after_softmax * torch.log(after_softmax + 1e-10), dim=1, keepdim=True)
+    # entropy_norm = entropy / np.log(after_softmax.size(1))
+    # weight = entropy_norm - domain_out
+    # weight = weight.detach()
+
     return weight
 
-def get_target_share_weight(domain_out, pred_shift, domain_temperature=1.0, class_temperature=1.0):
-    return - get_source_share_weight(domain_out, pred_shift, domain_temperature, class_temperature)
+def get_target_share_weight(domain_out, pred_shift, domain_temperature=1.0):
+    return - get_source_share_weight(domain_out, pred_shift, domain_temperature)
 
 def normalize_weight(x):
     x = (x - x.min()) / (x.max() - x.min())
@@ -76,16 +81,20 @@ def common_private_spilt(share_weight, feature):
 
     return feature_private.detach(), feature_common.detach()
 
-def get_target_reuse_weight(reuse_out, fc, reuse_temperature=1.0, common_temperature = 1.0):
+def get_target_reuse_weight(reuse_out, before_softmax, reuse_temperature=1.0, common_temperature = 1.0):
     reuse_logit = reverse_sigmoid(reuse_out)
     reuse_logit = reuse_logit / reuse_temperature
     reuse_out = nn.Sigmoid()(reuse_logit)
     
-    max, _ = fc.topk(2, dim=1, largest=True)
+    before_softmax = before_softmax / common_temperature
+    after_softmax = nn.Softmax(-1)(before_softmax)
+
+    max, _ = after_softmax.topk(2, dim=1, largest=True)
     class_tend = max[:,0]-max[:,1]
     class_tend = class_tend / torch.mean(class_tend)
+
     # class_tend = reverse_sigmoid(class_tend)
-    # class_tend = class_tend / common_temperature
+    # class_tend = class_tend / reuse_temperature
     # class_tend = nn.Sigmoid()(class_tend)
     
     w_r1 = torch.var(reuse_out)
@@ -110,24 +119,24 @@ def compute_avg_weight(weight, label, class_weight):
     return class_weight
 
 
-def pseudo_label_calibration(pslab, weight):
+def pseudo_label_calibration(pslab, weight, pslab_temperature = 1.0):
     #weight = weight.transpose(1, 0).expand(pslab.shape[0], -1)
     weight = normalize_weight(weight)
-    pslab = torch.exp(pslab)
+    pslab = torch.exp(pslab / pslab_temperature)
     pslab = pslab * weight
     pslab = pslab / torch.sum(pslab, 1, keepdim=True)
     return pslab, weight.detach()
 
-def get_source_reuse_weight(reuse_out, fc, w_avg, reuse_temperature=1.0, common_temperature = 1.0):
+def get_source_reuse_weight(reuse_out, fc, w_avg, reuse_temperature=1.0, common_temperature = 10.0):
     reuse_logit = reverse_sigmoid(reuse_out)
     reuse_logit = reuse_logit / reuse_temperature
     reuse_out = nn.Sigmoid()(reuse_logit)
 
     label_ind = torch.nonzero(torch.ge(w_avg, args.test.w_0))
     fc = torch.index_select(fc, 1, label_ind[:, 0])
-    fc = F.normalize(fc, p=1, dim=1)
-    fc = TempScale(fc, args.train.temp)
-    fc_softmax = fc.softmax(1)
+    # fc = F.normalize(fc, p=1, dim=1)
+    fc = fc / common_temperature
+    fc_softmax = nn.Softmax(-1)(fc)
 
     if min(fc_softmax.shape) == 0:
         class_tend = torch.zeros((fc_softmax.shape[0]),1)
