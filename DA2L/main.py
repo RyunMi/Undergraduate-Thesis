@@ -24,9 +24,6 @@ else:
     gpu_ids = select_GPUs(args.misc.gpus)
     device = gpu_ids[0]
 
-# device = torch.device('cuda', local_rank)
-# torch.distributed.init_process_group(backend='nccl') # Only for Linux
-
 now = datetime.datetime.now().strftime('%b%d-%H_%M_%S')
 
 log_dir = f'{args.log.root_dir}{now}'
@@ -48,7 +45,7 @@ class TotalNet(nn.Module):
         classifier_output_dim = len(source_classes)
         self.classifier = CLS(self.feature_extractor.output_num(), classifier_output_dim, bottle_neck_dim=256)
         self.domain_discriminator = AdversarialNetwork(256)
-        self.domain_discriminator_separate = NonAdversarialNetwork(256)
+        #self.domain_discriminator_separate = AdversarialNetwork(256)
         self.reuse_discriminator_s = AdversarialNetwork(256)
         self.reuse_discriminator_t = AdversarialNetwork(256)
 
@@ -56,30 +53,17 @@ class TotalNet(nn.Module):
         f = self.feature_extractor(x)
         f, _, __, y = self.classifier(f)
         d = self.domain_discriminator(_)
-        d_0 = self.domain_discriminator_separate(_)
+        #d_0 = self.domain_discriminator_separate(_)
         hat_d_s = self.reuse_discriminator_s(_)
         hat_d_t = self.reuse_discriminator_t(_)
-        return y, d, d_0, hat_d_s, hat_d_t
-
+        return y, d, hat_d_t, hat_d_s #d_0#, hat_d_s, hat_d_t
 
 totalNet = TotalNet()
 totalNet.to(device)
 
-# feature_extractor = nn.parallel.DistributedDataParallel(totalNet.feature_extractor, device_ids=[local_rank], 
-#                     output_device=local_rank, find_unused_parameters=True).train(True)
-# classifier = nn.parallel.DistributedDataParallel(totalNet.classifier, device_ids=[local_rank], 
-#                     output_device=local_rank, find_unused_parameters=True).train(True)
-# domain_discriminator = nn.parallel.DistributedDataParallel(totalNet.domain_discriminator, device_ids=[local_rank], 
-#                     output_device=local_rank, find_unused_parameters=True).train(True)
-# reuse_discriminator_s = nn.parallel.DistributedDataParallel(totalNet.reuse_discriminator_s, device_ids=[local_rank], 
-#                     output_device=local_rank, find_unused_parameters=True).train(True)
-# reuse_discriminator_t = nn.parallel.DistributedDataParallel(totalNet.reuse_discriminator_t, device_ids=[local_rank], 
-#                     output_device=local_rank, find_unused_parameters=True).train(True)
 feature_extractor = nn.DataParallel(totalNet.feature_extractor, device_ids=gpu_ids, output_device=device).train(True)
 classifier = nn.DataParallel(totalNet.classifier, device_ids=gpu_ids, output_device=device).train(True)
 domain_discriminator = nn.DataParallel(totalNet.domain_discriminator, device_ids=gpu_ids, output_device=device).train(True)
-domain_discriminator_separate = nn.DataParallel(totalNet.domain_discriminator_separate, device_ids=gpu_ids, 
-                                                output_device=device).train(True)
 reuse_discriminator_s = nn.DataParallel(totalNet.reuse_discriminator_s, device_ids=gpu_ids, output_device=device).train(True)
 reuse_discriminator_t = nn.DataParallel(totalNet.reuse_discriminator_t, device_ids=gpu_ids, output_device=device).train(True)
 
@@ -90,11 +74,10 @@ if args.test.test_only:
     feature_extractor.load_state_dict(data['feature_extractor'])
     classifier.load_state_dict(data['classifier'])
     domain_discriminator.load_state_dict(data['domain_discriminator'])
-    domain_discriminator_separate.load_state_dict(data['domain_discriminator_separate'])
     # w_avg.load_state_dict(data['w_avg'])
 
     counters = [AccuracyCounter() for x in range(len(source_classes) + 1)]
-    with TrainingModeManager([feature_extractor, classifier, domain_discriminator_separate], train=False) as mgr, \
+    with TrainingModeManager([feature_extractor, classifier, domain_discriminator], train=False) as mgr, \
             Accumulator(['feature', 'predict_prob', 'label', 'domain_prob', 'before_softmax',
                          'target_share_weight']) as target_accumulator:#, \
                 #torch.no_grad():
@@ -103,18 +86,15 @@ if args.test.test_only:
             label = label.to(device)
 
             feature = feature_extractor.forward(im)
-            
             feature, __, before_softmax, predict_prob = classifier.forward(feature)
-            predict_prob = TempScale(before_softmax, args.train.temp).softmax(1)
 
             # predict_prob, _ = pseudo_label_calibration(predict_prob, w_avg)
                     
-            domain_prob = domain_discriminator_separate.forward(__)
+            domain_prob = domain_discriminator.forward(__)
 
-            pred_shift = perturb(im, feature_extractor, classifier)
+            pred_shift = perturb(im, feature_extractor, classifier, class_temperature=1.0)
 
-            target_share_weight = get_target_share_weight(domain_prob, pred_shift,
-                                                                  domain_temperature=1.0, class_temperature=1.0)
+            target_share_weight = get_target_share_weight(domain_prob, pred_shift, domain_temperature=1.0)
 
             for name in target_accumulator.names:
                 globals()[name] = variable_to_numpy(globals()[name])
@@ -148,7 +128,7 @@ if args.test.test_only:
 # =================== optimizer
 scheduler = lambda step, initial_lr: inverseDecaySheduler(step, initial_lr, gamma=10, power=0.75, max_iter=10000)
 optimizer_finetune = OptimWithSheduler(
-    optim.SGD(feature_extractor.parameters(), lr=args.train.lr / 10.0, weight_decay=args.train.weight_decay, 
+    optim.SGD(feature_extractor.parameters(), lr=args.train.lr /10.0, weight_decay=args.train.weight_decay, 
               momentum=args.train.momentum, nesterov=True),
     scheduler)
 optimizer_cls = OptimWithSheduler(
@@ -159,15 +139,12 @@ optimizer_domain_discriminator = OptimWithSheduler(
     optim.SGD(domain_discriminator.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay,
                momentum=args.train.momentum, nesterov=True),
     scheduler)
-optimizer_domain_discriminator_separate = OptimWithSheduler(
-    optim.SGD(domain_discriminator_separate.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay, 
-    momentum=args.train.momentum, nesterov=True),scheduler)
-optimizer_reuse_discriminator_s = OptimWithSheduler(
-    optim.SGD(reuse_discriminator_s.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay, 
-              momentum=args.train.momentum, nesterov=True),
-    scheduler)
 optimizer_reuse_discriminator_t = OptimWithSheduler(
     optim.SGD(reuse_discriminator_t.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay, 
+              momentum=args.train.momentum, nesterov=True),
+    scheduler)
+optimizer_reuse_discriminator_s = OptimWithSheduler(
+    optim.SGD(reuse_discriminator_s.parameters(), lr=args.train.lr, weight_decay=args.train.weight_decay, 
               momentum=args.train.momentum, nesterov=True),
     scheduler)
 
@@ -204,28 +181,26 @@ while global_step < args.train.min_step:
 
         fc1_s, feature_source, fc2_s, predict_prob_source = classifier.forward(fc1_s)
         fc1_t, feature_target, fc2_t, predict_prob_target = classifier.forward(fc1_t)
-        predict_prob_source = TempScale(fc2_s, args.train.temp).softmax(1)
-        predict_prob_target = TempScale(fc2_t, args.train.temp).softmax(1)
          
         # Output of Domain Discriminator
         domain_prob_discriminator_source = domain_discriminator.forward(feature_source)
         domain_prob_discriminator_target = domain_discriminator.forward(feature_target)
 
-        domain_prob_discriminator_source_separate = domain_discriminator_separate.forward(feature_source.detach())
-        domain_prob_discriminator_target_separate = domain_discriminator_separate.forward(feature_target.detach())
+        # domain_prob_discriminator_source_separate = domain_discriminator_separate.forward(feature_source.detach())
+        # domain_prob_discriminator_target_separate = domain_discriminator_separate.forward(feature_target.detach())
 
         # Adversarial perturbation
-        pred_shift_source = perturb(im_source, feature_extractor, classifier)
-        pred_shift_target = perturb(im_target, feature_extractor, classifier)
+        pred_shift_source = perturb(im_source, feature_extractor, classifier, class_temperature=10.0)
+        pred_shift_target = perturb(im_target, feature_extractor, classifier, class_temperature=1.0)
 
         # w_s and w_t
-        source_share_weight = get_source_share_weight(domain_prob_discriminator_source_separate, pred_shift_source,
-                                                    domain_temperature=1.0, class_temperature=1.0)
-        source_share_weight = normalize_weight(source_share_weight)
-        target_share_weight = get_target_share_weight(domain_prob_discriminator_target_separate, pred_shift_target,
-                                                    domain_temperature=1.0, class_temperature=1.0)
-        target_share_weight = normalize_weight(target_share_weight)
-        
+        source_share_weight = get_source_share_weight(domain_prob_discriminator_source, pred_shift_source,
+                                                    domain_temperature=1.0)
+        source_share_weight_norm = normalize_weight(source_share_weight)
+        target_share_weight = get_target_share_weight(domain_prob_discriminator_target, pred_shift_target,
+                                                    domain_temperature=1.0)
+        target_share_weight_norm = normalize_weight(target_share_weight)
+
         # Pseudo Label Calibration
         source_share_weight_epoch[(global_step % total_epoch) * args.data.dataloader.batch_size : 
                         (global_step % total_epoch + 1) * args.data.dataloader.batch_size] \
@@ -237,12 +212,12 @@ while global_step < args.train.min_step:
         if epoch_id == 1:
             w_avg = compute_avg_weight(source_share_weight_epoch[0 : (global_step % total_epoch + 1) * args.data.dataloader.batch_size],
         label_source_epoch[0 : (global_step % total_epoch + 1) * args.data.dataloader.batch_size], w_avg)
-            _, w_avg = pseudo_label_calibration(predict_prob_target, w_avg)
+            _, w_avg = pseudo_label_calibration(fc2_t, w_avg, pslab_temperature = 1.0)
         else:
             w_avg = compute_avg_weight(source_share_weight_epoch, label_source_epoch, w_avg)
-            predict_prob_target, w_avg = pseudo_label_calibration(predict_prob_target, w_avg)
+            _, w_avg = pseudo_label_calibration(fc2_t, w_avg, pslab_temperature = 1.0)
 
-        # Reuse Detect and Reuse Loss
+        # # Reuse Detect and Reuse Loss
         feature_target_private, feature_target_common = common_private_spilt(target_share_weight, feature_target)
         
         dt_loss = torch.zeros(1, 1).to(device)
@@ -251,12 +226,13 @@ while global_step < args.train.min_step:
         if min(feature_target_private.shape) == 0:
             pass
         else:
-            fc_target_private, _ = common_private_spilt(target_share_weight, predict_prob_target)
-            target_share_weight_private, _ = common_private_spilt(target_share_weight, target_share_weight)
+            fc_target_private, _ = common_private_spilt(target_share_weight, fc2_t)
+            # target_share_weight_private, _ = common_private_spilt(target_share_weight, target_share_weight_norm)
             reuse_prob_discriminator_private_t = reuse_discriminator_t.forward(feature_target_private)
 
             target_reuse_weight = get_target_reuse_weight(reuse_prob_discriminator_private_t, fc_target_private)
-            tmp = target_reuse_weight * (1 / (1 + target_share_weight_private)).view(-1) * nn.BCELoss(reduction='none')\
+            # * (1 / (1 + target_share_weight_private)).view(-1)
+            tmp = target_reuse_weight  * nn.BCELoss(reduction='none')\
                 (reuse_prob_discriminator_private_t, torch.zeros_like(reuse_prob_discriminator_private_t)).view(-1)
             dt_loss += torch.mean(tmp, dim=0, keepdim=True)
 
@@ -281,42 +257,34 @@ while global_step < args.train.min_step:
             fc_source_private, _ = common_private_spilt(source_share_weight, fc2_s)
             reuse_prob_discriminator_private_s = reuse_discriminator_s.forward(feature_source_private)
             
-            
             source_reuse_weight = get_source_reuse_weight(reuse_prob_discriminator_private_s, fc_source_private, w_avg, 
-                                                    reuse_temperature=1.0, common_temperature = 1.0)
+                                                    reuse_temperature=1.0, common_temperature = 10.0)
             tmp = source_reuse_weight * nn.BCELoss(reduction='none')(reuse_prob_discriminator_private_s, 
                                                                 torch.zeros_like(reuse_prob_discriminator_private_s)).view(-1)
             ds_loss += torch.mean(tmp, dim=0, keepdim=True)
 
         # ============================= domain loss
         dom_loss = torch.zeros(1, 1).to(device)
+        # dom_loss_separate = torch.zeros(1, 1).to(device)
 
-        tmp = source_share_weight * nn.BCELoss(reduction='none')(domain_prob_discriminator_source, 
+        tmp = source_share_weight_norm * nn.BCELoss(reduction='none')(domain_prob_discriminator_source, 
                                                                 torch.zeros_like(domain_prob_discriminator_source))
         dom_loss += torch.mean(tmp, dim=0, keepdim=True)
-        tmp = target_share_weight * nn.BCELoss(reduction='none')(domain_prob_discriminator_target, 
+        tmp = target_share_weight_norm * nn.BCELoss(reduction='none')(domain_prob_discriminator_target, 
                                                                 torch.ones_like(domain_prob_discriminator_target))
         dom_loss += torch.mean(tmp, dim=0, keepdim=True)
-
-        dom_loss_separate = torch.zeros(1, 1).to(device)
-
-        dom_loss_separate += nn.BCELoss()(domain_prob_discriminator_source_separate, torch.zeros_like(domain_prob_discriminator_source_separate))
-        dom_loss_separate += nn.BCELoss()(domain_prob_discriminator_target_separate, torch.ones_like(domain_prob_discriminator_target_separate))
 
         # ============================== cross entropy loss
         ce = nn.CrossEntropyLoss(reduction='none')(predict_prob_source, label_source)
         ce = torch.mean(ce, dim=0, keepdim=True)
 
-        loss = torch.zeros(1, 1).to(device)
+        dom_coef = 1.0 * math.exp(-5 * (1 - min(global_step / 8000, 1))**2)
+        reuse_coef = 1.0 * math.exp(-5 * (1 - min(global_step / 16000, 1))**2)
 
         with OptimizerManager(
-                [optimizer_finetune, optimizer_cls, optimizer_domain_discriminator, optimizer_domain_discriminator_separate,
-                optimizer_reuse_discriminator_t, optimizer_reuse_discriminator_s]):
-            loss += ce
-            loss += dom_loss
-            loss += dom_loss_separate
-            loss += dt_loss
-            loss += ds_loss
+                [optimizer_finetune, optimizer_cls, optimizer_domain_discriminator,optimizer_reuse_discriminator_t, optimizer_reuse_discriminator_s]):
+                #optimizer_domain_discriminator_separate,]): 
+            loss = ce + dom_coef * dom_loss + reuse_coef * dt_loss + ds_loss#+ dom_loss_separate
             loss.backward()
 
         global_step += 1
@@ -328,36 +296,33 @@ while global_step < args.train.min_step:
             acc_train = torch.tensor([counter.reportAccuracy()]).to(device)
             logger.add_scalar('dom_loss', dom_loss, global_step)
             logger.add_scalar('ce', ce, global_step)
-            logger.add_scalar('acc_train', acc_train, global_step)
             logger.add_scalar('dt_loss', dt_loss, global_step)
             logger.add_scalar('ds_loss', ds_loss, global_step)
+            logger.add_scalar('acc_train', acc_train, global_step)
 
         # =================== validation
         if global_step % (args.test.test_interval) == 0:
 
             counters = [AccuracyCounter() for x in range(len(source_classes) + 1)]
-            with TrainingModeManager([feature_extractor, classifier, domain_discriminator_separate], train=False) as mgr, \
+            with TrainingModeManager([feature_extractor, classifier, domain_discriminator], train=False) as mgr, \
             Accumulator(['feature', 'predict_prob', 'label', 'domain_prob', 'before_softmax','target_share_weight']) as target_accumulator:#, \
                 #torch.no_grad():
 
                 for i, (im, label) in enumerate(tqdm(target_test_dl, desc='testing ')):
-                    torch.cuda.empty_cache()
                     im = im.to(device)
                     label = label.to(device)
 
                     feature = feature_extractor.forward(im)
-                    
                     feature, __, before_softmax, predict_prob = classifier.forward(feature)
-                    predict_prob = TempScale(before_softmax, args.train.temp).softmax(1)
+                    
+                    pred_shift_target = perturb(im, feature_extractor, classifier, class_temperature=1.0)
 
                     # predict_prob, _ = pseudo_label_calibration(predict_prob, w_avg)
                     
-                    domain_prob = domain_discriminator_separate.forward(__)
-                    
-                    pred_shift = perturb(im, feature_extractor, classifier)
+                    domain_prob = domain_discriminator.forward(__)
 
-                    target_share_weight = get_target_share_weight(domain_prob, pred_shift,
-                                                                domain_temperature=1.0, class_temperature=1.0)
+                    target_share_weight = get_target_share_weight(domain_prob, pred_shift_target,
+                                                                domain_temperature=1.0)
 
                     for name in target_accumulator.names:
                         globals()[name] = variable_to_numpy(globals()[name])
@@ -388,6 +353,7 @@ while global_step < args.train.min_step:
             acc_test = torch.ones(1, 1) * np.mean(acc_tests)
 
             logger.add_scalar('acc_test', acc_test, global_step)
+            
             clear_output()
             print(f'test accuracy is {acc_test.item()}')
 
@@ -395,7 +361,6 @@ while global_step < args.train.min_step:
                 "feature_extractor": feature_extractor.state_dict(),
                 'classifier': classifier.state_dict(),
                 'domain_discriminator': domain_discriminator.state_dict() if not isinstance(domain_discriminator, Nonsense) else 1.0,
-                'domain_discriminator_separate': domain_discriminator_separate.state_dict(),
                 # 'w_avg': w_avg.state_dict(),
             }
 
@@ -406,5 +371,3 @@ while global_step < args.train.min_step:
 
             with open(join(log_dir, 'current.pkl'), 'wb') as f:
                 torch.save(data, f)
-
-            torch.cuda.empty_cache()
