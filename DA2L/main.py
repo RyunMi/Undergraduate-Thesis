@@ -286,7 +286,6 @@ while global_step < args.train.min_step:
                 #optimizer_domain_discriminator_separate,]): 
             loss = ce + dom_coef * dom_loss + reuse_coef * dt_loss + ds_loss#+ dom_loss_separate
             loss.backward()
-
         global_step += 1
         total_steps.update()
 
