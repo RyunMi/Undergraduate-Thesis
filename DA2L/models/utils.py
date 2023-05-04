@@ -13,6 +13,7 @@ def seed_everything(seed=1234):
 
 def TempScale(p, t):
     return p / t
+
 def perturb(inputs, feature_extractor, classifier, class_temperature=10.0):
     with TrainingModeManager([feature_extractor, classifier], train=False):
         inputs.requires_grad = True
