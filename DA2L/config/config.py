@@ -1,9 +1,6 @@
 import yaml
 import easydict
-#import os
 from os.path import join
-
-#local_rank = int(os.environ["LOCAL_RANK"])
 
 class Dataset:
     def __init__(self, path, domains, files, prefix):

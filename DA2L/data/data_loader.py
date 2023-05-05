@@ -3,7 +3,6 @@ from easydl import *
 from collections import Counter
 from torchvision.transforms.transforms import *
 from torch.utils.data import DataLoader, WeightedRandomSampler
-#from catalyst.data.sampler import DistributedSamplerWrapper
 
 '''
 assume classes across domains are the same.
@@ -48,8 +47,6 @@ class_weight = {x : 1.0 / freq[x] if args.data.dataloader.class_balance else 1.0
 source_weights = [class_weight[x] for x in source_train_ds.labels]
 
 weight_random_sampler = WeightedRandomSampler(source_weights, len(source_train_ds.labels))
-# sampler = [DistributedSamplerWrapper(weight_random_sampler, num_replicas = local_rank, rank = i)
-#         for i in range(local_rank)]
 
 source_train_dl = DataLoader(dataset=source_train_ds, batch_size=args.data.dataloader.batch_size,shuffle=False,
                              sampler=weight_random_sampler, num_workers=args.data.dataloader.data_workers, drop_last=True)

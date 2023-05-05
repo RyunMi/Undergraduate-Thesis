@@ -2,4 +2,3 @@ easydict
 easydl
 tensorboardX
 tqdm
-catalyst

@@ -186,9 +186,6 @@ while global_step < args.train.min_step:
         domain_prob_discriminator_source = domain_discriminator.forward(feature_source)
         domain_prob_discriminator_target = domain_discriminator.forward(feature_target)
 
-        # domain_prob_discriminator_source_separate = domain_discriminator_separate.forward(feature_source.detach())
-        # domain_prob_discriminator_target_separate = domain_discriminator_separate.forward(feature_target.detach())
-
         # Adversarial perturbation
         pred_shift_source = perturb(im_source, feature_extractor, classifier, class_temperature=10.0)
         pred_shift_target = perturb(im_target, feature_extractor, classifier, class_temperature=1.0)
@@ -265,7 +262,6 @@ while global_step < args.train.min_step:
 
         # ============================= domain loss
         dom_loss = torch.zeros(1, 1).to(device)
-        # dom_loss_separate = torch.zeros(1, 1).to(device)
 
         tmp = source_share_weight_norm * nn.BCELoss(reduction='none')(domain_prob_discriminator_source, 
                                                                 torch.zeros_like(domain_prob_discriminator_source))
@@ -278,13 +274,13 @@ while global_step < args.train.min_step:
         ce = nn.CrossEntropyLoss(reduction='none')(predict_prob_source, label_source)
         ce = torch.mean(ce, dim=0, keepdim=True)
 
-        dom_coef = 1.0 * math.exp(-5 * (1 - min(global_step / 8000, 1))**2)
-        reuse_coef = 1.0 * math.exp(-5 * (1 - min(global_step / 16000, 1))**2)
+        # dom_coef = 1.0 * math.exp(-5 * (1 - min(global_step / 8000, 1))**2)
+        # reuse_coef = 1.0 * math.exp(-5 * (1 - min(global_step / 16000, 1))**2)
 
         with OptimizerManager(
-                [optimizer_finetune, optimizer_cls, optimizer_domain_discriminator,optimizer_reuse_discriminator_t, optimizer_reuse_discriminator_s]):
-                #optimizer_domain_discriminator_separate,]): 
-            loss = ce + dom_coef * dom_loss + reuse_coef * dt_loss + ds_loss#+ dom_loss_separate
+                [optimizer_finetune, optimizer_cls, optimizer_domain_discriminator,
+                 optimizer_reuse_discriminator_t, optimizer_reuse_discriminator_s]):
+            loss = ce + dom_loss + dt_loss + ds_loss
             loss.backward()
 
         global_step += 1
