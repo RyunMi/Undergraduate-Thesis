@@ -14,23 +14,23 @@ data:
     batch_size: 32 # batch_size for source domain and target domain respectively
 
 model:
-  base_model: resnext101 # choices=['resnet50', 'resnext101']
-  pretrained_model: ./pretrained/resnext101.pth # /path/to/pretrained/model
+  base_model: resnet50 # choices=['resnet50', 'vgg16']
+  pretrained_model: pretrained/resnet50.pth # /path/to/pretrained/model
 
 train:
-  min_step: 12000 # minimum steps to run. run epochs until it exceeds the minStep
+  min_step: 40000 # minimum steps to run. run epochs until it exceeds the minStep
   lr: 0.002 # learning rate for new layers. learning rate for finetune is 1/10 of lr
   weight_decay: 0.0005
   momentum: 0.9
   eps: 0.0014
   alpha: 0.6
-  temp: 0.8
+  temp: 10.0
 
 test:
   test_interval: 500 # interval of two continuous test phase
   test_only: False # test a given model and exit
   resume_file: '' # model to test
-  w_0: 0.9 # hyper-parameter w_0
+  w_0: -0.5 # hyper-parameter w_0
 
 misc:
   gpus: 1 # how many GPUs to be used, 0 indicates CPU only

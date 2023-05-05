@@ -18,16 +18,16 @@ model:
   pretrained_model: /workspace/fubo/resnet50.pth # /path/to/pretrained/model
 
 train:
-  min_step: 6000 # minimum steps to run. run epochs until it exceeds the minStep
+  min_step: 36000 # minimum steps to run. run epochs until it exceeds the minStep
   lr: 0.001 # learning rate for new layers. learning rate for finetune is 1/10 of lr
   weight_decay: 0.0005
   momentum: 0.9
 
 test:
-  test_interval: 100 # interval of two continuous test phase
+  test_interval: 500 # interval of two continuous test phase
   test_only: True # test a given model and exit
   resume_file: best.pkl # model to test
-  w_0: 0.99 # hyper-parameter w_0
+  w_0: -0.6 # hyper-parameter w_0
 
 misc:
   gpus: 1 # how many GPUs to be used, 0 indicates CPU only
