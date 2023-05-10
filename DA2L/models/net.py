@@ -77,60 +77,6 @@ class ResNet50Fc(BaseFeatureExtractor):
         return self.__in_features
 
 
-class Resnext101Fc(BaseFeatureExtractor):
-    """
-    ** input image should be in range of [0, 1]**
-    """
-    def __init__(self, model_path=None, normalize=True):
-        super(Resnext101Fc, self).__init__()
-        if model_path:
-            if os.path.exists(model_path):
-                self.model_resnext = models.resnext101_32x8d(pretrained=False)
-                self.model_resnext.load_state_dict(torch.load(model_path))
-            else:
-                raise Exception('invalid model path!')
-        else:
-            self.model_resnext = models.resnext101_32x8d(pretrained=True)
-
-        if model_path or normalize:
-            # pretrain model is used, use ImageNet normalization
-            self.normalize = True
-            self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
-            self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
-        else:
-            self.normalize = False
-
-        model_resnext = self.model_resnext
-        self.conv1 = model_resnext.conv1
-        self.bn1 = model_resnext.bn1
-        self.relu = model_resnext.relu
-        self.maxpool = model_resnext.maxpool
-        self.layer1 = model_resnext.layer1
-        self.layer2 = model_resnext.layer2
-        self.layer3 = model_resnext.layer3
-        self.layer4 = model_resnext.layer4
-        self.avgpool = model_resnext.avgpool
-        self.__in_features = model_resnext.fc.in_features
-
-    def forward(self, x):
-        if self.normalize:
-            x = (x - self.mean) / self.std
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        return x
-
-    def output_num(self):
-        return self.__in_features
-
-
 class CLS(nn.Module):
     """
     a two-layer MLP for classification
