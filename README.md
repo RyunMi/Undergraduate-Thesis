@@ -28,7 +28,7 @@ Pytorch 1.7.1
 
 ### Usage
 
-- download datasets(Office-31, Office-Home, VisDA2017, DomainNet et al.)
+- download datasets(Office-31, Office-Home, VisDA2017, DomainNet et al.) and pretrained models(such as ResNet50)
 
 - write your tran & test config file
 
