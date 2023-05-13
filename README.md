@@ -20,9 +20,9 @@ Code Release for "Domain Adaptation Based on Adversarial Learning".
 
 ### Enviroment
 
-python 3.7
+Python 3.7
 
-Pytorch 1.7.1
+PyTorch 1.7.1
 
 `pip install -r requirements.txt`
 
