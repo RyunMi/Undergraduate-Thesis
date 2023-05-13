@@ -17,3 +17,33 @@ And you should modify the *cover-template.doc* to complete your cover and some o
 ## $DA^2L$ 
 
 Code Release for "Domain Adaptation Based on Adversarial Learning".
+
+### Enviroment
+
+python 3.7
+
+Pytorch 1.7.1
+
+`pip install -r requirements.txt`
+
+### Usage
+
+- download datasets(Office-31, Office-Home, VisDA2017, DomainNet et al.)
+
+- write your tran & test config file
+
+- train:
+
+  `python main.py --config config/(train_config_name).yaml`
+
+- test
+
+  `python main.py --config config/(test_config_name).yaml`
+
+- monitor (tensorboard required)
+
+  `tensorboard --logdir log/(dataset)/(time)/`
+
+### Note
+
+Inspired by [youkaichao](https://github.com/thuml/Universal-Domain-Adaptation) and [zhuohuangai](https://github.com/zhuohuangai/cafa-1).
