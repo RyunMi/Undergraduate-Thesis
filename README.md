@@ -20,6 +20,10 @@ Code Release for "Domain Adaptation Based on Adversarial Learning".
 
 ### Enviroment
 
+Ubuntu 20.04
+
+Nvidia GeForce RTX 3090
+
 Python 3.7
 
 PyTorch 1.7.1
