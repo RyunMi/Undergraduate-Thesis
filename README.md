@@ -6,7 +6,7 @@ Xiangtan University Undergraduate Thesis
 
 Some .md notes about Semi-Supervised Learning, Generative Adversarial Networks and Domain Adaptation's paper.
 
-## LaTeX-Template
+## Thesis-Template
 
 A LaTeX template about Xiangtan University's undergraduate thesis.
 

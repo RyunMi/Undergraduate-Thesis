@@ -7,13 +7,15 @@
 \RequirePackage{mathrsfs}             % 数学RSFS书写字体
 \RequirePackage{bm}                   % 数学黑体
 \RequirePackage{graphicx}             % 支持插图,图形宏包graphics的扩展宏包
-\RequirePackage{color,xcolor}         % 支持彩色
+\RequirePackage{color}    
+\RequirePackage[dvipsnames]{xcolor}   % 支持彩色
 \RequirePackage{hyperref}             % 超级链接
 \hypersetup{
+  hidelinks,
   CJKbookmarks=true,
   bookmarksnumbered=false,
   bookmarksopen=true,
-  colorlinks=true,
+  colorlinks=false,
   linkcolor=black,
   anchorcolor=black,
   citecolor=black,
@@ -63,7 +65,7 @@
     %\setlength\parskip{1\baselineskip}}
 
 \newenvironment{cnkeywords}[1]{%
-    {\songti\bfseries\zihao{-4}关键词：}\zihao{5}#1%
+    {\songti\bf\zihao{-4}关键词：}\zihao{5}#1%
 }
 
 \newenvironment{enabstract}[1]{%
