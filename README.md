@@ -20,7 +20,7 @@ Code Release for "Domain Adaptation Based on Adversarial Learning".
 
 ### Enviroment
 
-Ubuntu 20.04
+Ubuntu 20.04 LTS
 
 Nvidia GeForce RTX 3090
 
@@ -40,11 +40,11 @@ PyTorch 1.7.1
 
   `python main.py --config config/(train_config_name).yaml`
 
-- test
+- test:
 
   `python main.py --config config/(test_config_name).yaml`
 
-- monitor (tensorboard required)
+- monitor (tensorboard required):
 
   `tensorboard --logdir log/(dataset)/(time)/`
 
